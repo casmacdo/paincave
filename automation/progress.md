@@ -19,3 +19,15 @@ This file is an append-only handoff log maintained by `scripts/update-task.mjs` 
 
 ## 2026-11-26 19:17 UTC — M1-03 (`pending` -> `done`)
 - Implemented deterministic physiology engine, O(N) prefix-sum MMP & HRR-60s, golden-ride.json fixture, and bridge protocol schemas.
+
+## 2026-11-26 19:27 UTC — M2-01 (`pending` -> `done`)
+- Set up Hono Worker, wrangler types, structured JSON logging, and @cloudflare/vitest-plugin D1/R2 suite.
+
+## 2026-11-26 19:27 UTC — M2-02 (`pending` -> `done`)
+- Implemented Web Crypto PBKDF2/timing-safe auth, HttpOnly sessions, and Athlete/Thresholds/Blocks/Notes CRUD.
+
+## 2026-11-26 19:27 UTC — M2-03 (`pending` -> `done`)
+- Implemented Workouts CRUD, guardrail validation, ZWO/ERG/flattened export, and Calendar endpoints.
+
+## 2026-11-26 19:27 UTC — M2-04 (`pending` -> `done`)
+- Implemented idempotent ride_uuid ingestion, R2 FIT upload, incremental daily_pmc, and fitness overview.

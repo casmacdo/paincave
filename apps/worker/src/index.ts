@@ -1,9 +1,10 @@
+import { createApp } from "./app.js";
+import type { AppEnv } from "./types.js";
+
+const app = createApp();
+
 export default {
-  fetch(request: Request): Response {
-    const url = new URL(request.url);
-    if (url.pathname === "/api/health") {
-      return Response.json({ ok: true, service: "paincave-worker" });
-    }
-    return Response.json({ error: "Not implemented yet (complete M2-01)" }, { status: 501 });
+  fetch(request: Request, env: AppEnv, ctx: ExecutionContext): Promise<Response> {
+    return Promise.resolve(app.fetch(request, env, ctx));
   },
-};
+} satisfies ExportedHandler<AppEnv>;

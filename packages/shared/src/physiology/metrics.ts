@@ -249,19 +249,17 @@ function detectErgSmoothing(
     }
   }
 
-  let runDiffs: number[] = [];
+  let runCount = 0;
+  let runSum = 0;
+  let runSumSq = 0;
   let prevTarget: number | null = null;
   let prevStepIdx: number | null | undefined = undefined;
 
-  const checkRun = (diffs: readonly number[]): boolean => {
-    if (diffs.length < 60) return false;
-    let mean = 0;
-    for (const d of diffs) mean += d;
-    mean /= diffs.length;
-    let variance = 0;
-    for (const d of diffs) variance += (d - mean) ** 2;
-    const stdDev = Math.sqrt(variance / diffs.length);
-    return stdDev < 1.5;
+  const isSmoothedRun = (): boolean => {
+    if (runCount < 60) return false;
+    const mean = runSum / runCount;
+    const variance = Math.max(0, runSumSq / runCount - mean * mean);
+    return Math.sqrt(variance) < 1.5;
   };
 
   for (const s of samples) {
@@ -273,39 +271,39 @@ function detectErgSmoothing(
       ? step.mode === "erg" && step.watts_start === step.watts_end
       : s.target_watts !== null && s.target_watts !== undefined;
 
-    if (
+    const validTarget =
       isSteadyErg &&
       s.target_watts !== null &&
       s.target_watts !== undefined &&
       s.target_watts >= 100 &&
       s.watts !== null &&
-      s.watts !== undefined &&
-      s.target_watts === prevTarget &&
-      s.step_index === prevStepIdx
-    ) {
-      runDiffs.push(s.watts - s.target_watts);
+      s.watts !== undefined;
+
+    if (validTarget && s.target_watts === prevTarget && s.step_index === prevStepIdx) {
+      const diff = (s.watts ?? 0) - (s.target_watts ?? 0);
+      runCount++;
+      runSum += diff;
+      runSumSq += diff * diff;
     } else {
-      if (checkRun(runDiffs)) return true;
-      runDiffs = [];
-      if (
-        isSteadyErg &&
-        s.target_watts !== null &&
-        s.target_watts !== undefined &&
-        s.target_watts >= 100 &&
-        s.watts !== null &&
-        s.watts !== undefined
-      ) {
-        runDiffs.push(s.watts - s.target_watts);
-        prevTarget = s.target_watts;
+      if (isSmoothedRun()) return true;
+      if (validTarget) {
+        const diff = (s.watts ?? 0) - (s.target_watts ?? 0);
+        runCount = 1;
+        runSum = diff;
+        runSumSq = diff * diff;
+        prevTarget = s.target_watts ?? null;
         prevStepIdx = s.step_index;
       } else {
+        runCount = 0;
+        runSum = 0;
+        runSumSq = 0;
         prevTarget = null;
         prevStepIdx = undefined;
       }
     }
   }
 
-  return checkRun(runDiffs);
+  return isSmoothedRun();
 }
 
 function computeCompliancePct(intervals: readonly IntervalExecution[]): number | null {

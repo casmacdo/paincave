@@ -115,7 +115,7 @@
       "id": "M2-01",
       "milestone": "M2",
       "title": "Set up Cloudflare Worker with Hono, wrangler types, structured JSON logging, and Vitest Workers pool harness",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M1-03"
       ],
@@ -131,13 +131,15 @@
         "GET /api/health and GET /api/version return structured JSON",
         "@cloudflare/vitest-pool-workers runs real D1 migrations (0001_initial.sql) and R2 bindings in test suite"
       ],
-      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test",
+      "notes": "Set up Hono Worker, wrangler types, structured JSON logging, and @cloudflare/vitest-plugin D1/R2 suite.",
+      "updated_at": "2026-11-26T19:27:22.378Z"
     },
     {
       "id": "M2-02",
       "milestone": "M2",
       "title": "Implement Worker authentication (Web Crypto sessions, timing-safe device & MCP tokens) and athlete profile/thresholds/blocks/notes API",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M2-01"
       ],
@@ -153,13 +155,15 @@
         "CRUD endpoints work for athlete_profile, dated athlete_thresholds, training_blocks, and coaching_notes",
         "Unauthorized requests return 401 cleanly with structured JSON errors"
       ],
-      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test",
+      "notes": "Implemented Web Crypto PBKDF2/timing-safe auth, HttpOnly sessions, and Athlete/Thresholds/Blocks/Notes CRUD.",
+      "updated_at": "2026-11-26T19:27:29.817Z"
     },
     {
       "id": "M2-03",
       "milestone": "M2",
       "title": "Implement Workouts CRUD, deterministic ZWO/ERG export endpoints, and Calendar planned_sessions API",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M2-02"
       ],
@@ -173,13 +177,15 @@
         "GET /api/workouts/:id/export.zwo and export.erg return valid downloadable files",
         "Calendar endpoints list date ranges with joined workout details, schedule sessions, and check training_block day constraints"
       ],
-      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test",
+      "notes": "Implemented Workouts CRUD, guardrail validation, ZWO/ERG/flattened export, and Calendar endpoints.",
+      "updated_at": "2026-11-26T19:27:36.617Z"
     },
     {
       "id": "M2-04",
       "milestone": "M2",
       "title": "Implement idempotent ride ingestion (R2 .fit + D1 batch + incremental PMC), ride detail/RPE endpoints, and fitness overview API",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M2-03"
       ],
@@ -195,7 +201,9 @@
         "Incrementally recomputes daily_pmc (CTL/ATL/TSB/ramp_rate_7d) from ride date forward and links matching planned_sessions",
         "GET /api/fitness/overview returns daily PMC, weekly rollups, and rolling 42d/90d MMP + CP/W'"
       ],
-      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test",
+      "notes": "Implemented idempotent ride_uuid ingestion, R2 FIT upload, incremental daily_pmc, and fitness overview.",
+      "updated_at": "2026-11-26T19:27:43.296Z"
     },
     {
       "id": "M3-01",
