@@ -4,6 +4,7 @@ import { RideUploadSummarySchema } from "@paincave/shared";
 import type { HonoAppContext } from "../types.js";
 import { requireBridgeOrUiAuth, requireUiAuth } from "../lib/auth.js";
 import { ingestRide, type RideRow } from "../lib/rides-service.js";
+import { recomputePmcFromDay } from "../lib/pmc-store.js";
 import { uploadFitToStrava } from "../lib/strava-client.js";
 
 const PatchRideSchema = z.object({
@@ -158,6 +159,33 @@ export function createRideRoutes(): Hono<HonoAppContext> {
       .bind(uuid)
       .first<RideRow>();
     return c.json({ ride: updated });
+  });
+
+  router.delete("/:ride_uuid", requireUiAuth, async (c) => {
+    const uuid = c.req.param("ride_uuid");
+    const ride = await c.env.DB.prepare(
+      "SELECT ride_uuid, ride_day, r2_fit_key FROM rides WHERE ride_uuid = ?"
+    )
+      .bind(uuid)
+      .first<{ ride_uuid: string; ride_day: string; r2_fit_key: string }>();
+    if (!ride) {
+      return c.json({ error: "Ride not found" }, 404);
+    }
+
+    await c.env.RIDES_BUCKET.delete(ride.r2_fit_key);
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `UPDATE planned_sessions
+         SET completed_ride_uuid = NULL,
+             status = 'planned',
+             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+         WHERE completed_ride_uuid = ?`
+      ).bind(uuid),
+      c.env.DB.prepare("DELETE FROM rides WHERE ride_uuid = ?").bind(uuid),
+    ]);
+    await recomputePmcFromDay(c.env.DB, ride.ride_day);
+
+    return c.json({ ok: true });
   });
 
   router.get("/:ride_uuid/fit", requireUiAuth, async (c) => {

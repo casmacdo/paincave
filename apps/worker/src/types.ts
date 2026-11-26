@@ -5,6 +5,7 @@ export interface WorkerSecrets {
   MCP_BEARER_TOKEN?: string;
   STRAVA_CLIENT_ID?: string;
   STRAVA_CLIENT_SECRET?: string;
+  PUBLIC_APP_URL?: string;
 }
 
 /**

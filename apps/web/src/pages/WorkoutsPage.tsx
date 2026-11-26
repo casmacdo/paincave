@@ -12,6 +12,7 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
   const [workouts, setWorkouts] = useState<WorkoutRecord[]>([]);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -33,6 +34,27 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
       w.name.toLowerCase().includes(search.toLowerCase()) ||
       w.category.toLowerCase().includes(search.toLowerCase())
   );
+
+  const handleDelete = async (workout: WorkoutRecord) => {
+    if (
+      !window.confirm(
+        `Delete "${workout.name}" from your workout library?\n\nCompleted ride history and planned sessions will be preserved.`
+      )
+    ) {
+      return;
+    }
+
+    setDeletingId(workout.id);
+    setError(null);
+    try {
+      await api.deleteWorkout(workout.id);
+      setWorkouts((current) => current.filter((item) => item.id !== workout.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete workout");
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -76,13 +98,23 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
                     {w.predicted_if ?? "--"} · TSS {w.predicted_tss ?? "--"}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void onLoadWorkout(w.id)}
-                  className="rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400"
-                >
-                  Load on Trainer
-                </button>
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void onLoadWorkout(w.id)}
+                    className="rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400"
+                  >
+                    Load on Trainer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete(w)}
+                    disabled={deletingId === w.id}
+                    className="rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-300 hover:border-rose-400 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {deletingId === w.id ? "Deleting..." : "Delete"}
+                  </button>
+                </div>
               </div>
 
               {steps.length > 0 && <WorkoutProfileSvg steps={steps} ftpWatts={ftpWatts} height={64} />}

@@ -18,6 +18,8 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
     ReturnType<typeof api.getRideDetail>
   > | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [deleteStatus, setDeleteStatus] = useState<string | null>(null);
+  const [deletingRideUuid, setDeletingRideUuid] = useState<string | null>(null);
 
   const loadData = async () => {
     const [ov, rs] = await Promise.all([api.getFitnessOverview(42), api.getRides(25)]);
@@ -90,6 +92,32 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
     }
   };
 
+  const handleDeleteRide = async (ride: RideRecord) => {
+    if (
+      !window.confirm(
+        `Delete "${ride.name}" (${ride.ride_day})?\n\nThis removes the ride, its FIT file, intervals, peaks, and PMC contribution. It does not remove an activity already uploaded to Strava.`
+      )
+    ) {
+      return;
+    }
+
+    setDeletingRideUuid(ride.ride_uuid);
+    setDeleteStatus(null);
+    try {
+      await api.deleteRide(ride.ride_uuid);
+      setRides((current) => current.filter((item) => item.ride_uuid !== ride.ride_uuid));
+      if (selectedDetail?.ride.ride_uuid === ride.ride_uuid) {
+        setSelectedDetail(null);
+      }
+      await loadData();
+      setDeleteStatus("Ride deleted.");
+    } catch (err) {
+      setDeleteStatus(err instanceof Error ? err.message : "Failed to delete ride");
+    } finally {
+      setDeletingRideUuid(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -108,6 +136,12 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
       {uploadStatus && (
         <div className="rounded-xl border border-orange-500/40 bg-orange-500/10 px-4 py-2.5 text-sm text-orange-200">
           {uploadStatus}
+        </div>
+      )}
+
+      {deleteStatus && (
+        <div className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-zinc-300">
+          {deleteStatus}
         </div>
       )}
 
@@ -172,22 +206,34 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
             Recent Rides
           </h2>
           {rides.map((r) => (
-            <button
+            <div
               key={r.ride_uuid}
-              type="button"
-              onClick={() => void api.getRideDetail(r.ride_uuid).then(setSelectedDetail)}
-              className="w-full rounded-xl border border-zinc-800 bg-zinc-900 p-3.5 text-left hover:border-orange-500/60"
+              className="flex items-stretch gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-2"
             >
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-white">{r.name}</span>
-                <span className="text-xs font-mono text-zinc-400">{r.ride_day}</span>
-              </div>
-              <div className="mt-1 text-xs text-zinc-400">
-                {Math.round(r.duration_s / 60)}m · NP {r.np_watts ?? "--"}W · IF{" "}
-                {r.intensity_factor ?? "--"} · TSS {r.tss} · Pw:HR{" "}
-                {r.pw_hr_decoupling !== null ? `${r.pw_hr_decoupling}%` : "--"}
-              </div>
-            </button>
+              <button
+                type="button"
+                onClick={() => void api.getRideDetail(r.ride_uuid).then(setSelectedDetail)}
+                className="min-w-0 flex-1 rounded-lg p-1.5 text-left hover:bg-zinc-800"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-white">{r.name}</span>
+                  <span className="text-xs font-mono text-zinc-400">{r.ride_day}</span>
+                </div>
+                <div className="mt-1 text-xs text-zinc-400">
+                  {Math.round(r.duration_s / 60)}m · NP {r.np_watts ?? "--"}W · IF{" "}
+                  {r.intensity_factor ?? "--"} · TSS {r.tss} · Pw:HR{" "}
+                  {r.pw_hr_decoupling !== null ? `${r.pw_hr_decoupling}%` : "--"}
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteRide(r)}
+                disabled={deletingRideUuid === r.ride_uuid}
+                className="self-center rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-300 hover:border-rose-400 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deletingRideUuid === r.ride_uuid ? "Deleting..." : "Delete"}
+              </button>
+            </div>
           ))}
         </section>
 

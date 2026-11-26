@@ -164,5 +164,96 @@ describe("Idempotent Ride Ingestion, PMC & Fitness Overview", () => {
     expect(overview.current_pmc.atl).toBeCloseTo(84 / 7, 2);
     expect(overview.mmp_42d.length).toBeGreaterThanOrEqual(8);
     expect(overview.weekly_rollups[0]?.tss).toBe(84);
+
+    // Deleting a ride removes D1 metadata and the R2 FIT object, and recomputes PMC.
+    const deleteRes = await exports.default.fetch(
+      `https://paincave.test/api/rides/${rideUuid}`,
+      { method: "DELETE", headers: { Cookie: cookie } }
+    );
+    expect(deleteRes.status).toBe(200);
+
+    const deletedDetail = await exports.default.fetch(
+      `https://paincave.test/api/rides/${rideUuid}`,
+      { headers: { Cookie: cookie } }
+    );
+    expect(deletedDetail.status).toBe(404);
+
+    const fitKey = `fits/${today.slice(0, 4)}/${today.slice(5, 7)}/${rideUuid}.fit`;
+    expect(await env.RIDES_BUCKET.get(fitKey)).toBeNull();
+
+    const deletedOverviewRes = await exports.default.fetch(
+      "https://paincave.test/api/fitness/overview?days=42",
+      { headers: { Cookie: cookie } }
+    );
+    expect(deletedOverviewRes.status).toBe(200);
+    const deletedOverview = await deletedOverviewRes.json<{
+      current_pmc: { ctl: number; atl: number };
+    }>();
+    expect(deletedOverview.current_pmc.ctl).toBeCloseTo(0, 2);
+    expect(deletedOverview.current_pmc.atl).toBeCloseTo(0, 2);
+  });
+
+  it("ingests a ride whose workout or planned session was deleted", async () => {
+    const rideUuid = "550e8400-e29b-41d4-a716-446655440002";
+    const today = new Date().toISOString().slice(0, 10);
+    const summary = {
+      ride_uuid: rideUuid,
+      name: goldenRide.workout_spec.name,
+      source: "indoor_bridge" as const,
+      workout_id: "missing-workout-id",
+      planned_session_id: "missing-planned-session-id",
+      started_at: `${today}T12:00:00Z`,
+      ride_day: today,
+      duration_s: goldenRide.expected.duration_s,
+      elapsed_s: goldenRide.expected.elapsed_s,
+      work_kj: goldenRide.expected.work_kj,
+      avg_power: goldenRide.expected.avg_power,
+      np_watts: goldenRide.expected.np_watts,
+      intensity_factor: goldenRide.expected.intensity_factor,
+      tss: 84,
+      variability_index: goldenRide.expected.variability_index,
+      avg_hr: goldenRide.expected.avg_hr,
+      max_hr: goldenRide.expected.max_hr,
+      efficiency_factor: goldenRide.expected.efficiency_factor,
+      pw_hr_decoupling: goldenRide.expected.pw_hr_decoupling,
+      hrr_60s: goldenRide.expected.hrr_60s,
+      time_gt_90_hrmax_s: goldenRide.expected.time_gt_90_hrmax_s,
+      avg_cadence: goldenRide.expected.avg_cadence,
+      compliance_pct: goldenRide.expected.compliance_pct,
+      power_zones: goldenRide.expected.power_zones,
+      hr_zones: goldenRide.expected.hr_zones,
+      quality_flags: goldenRide.expected.quality_flags,
+      ftp_snapshot: goldenRide.thresholds.ftp_watts,
+      lthr_snapshot: goldenRide.thresholds.lthr_bpm,
+      hrmax_snapshot: goldenRide.thresholds.hrmax_bpm,
+      weight_kg_snapshot: goldenRide.thresholds.weight_kg,
+      rpe: null,
+      feel: null,
+      notes: "",
+      intervals: goldenRide.expected.intervals,
+      peaks: goldenRide.expected.peaks,
+    };
+
+    const form = new FormData();
+    form.append("summary", JSON.stringify(summary));
+    form.append(
+      "fit",
+      new Blob([new Uint8Array([14, 0x10, 0, 0, 1, 2, 3, 4])], {
+        type: "application/vnd.ant.fit",
+      }),
+      "ride.fit"
+    );
+
+    const res = await exports.default.fetch("https://paincave.test/api/rides", {
+      method: "POST",
+      headers: { "X-Bridge-Token": env.BRIDGE_DEVICE_TOKEN ?? "" },
+      body: form,
+    });
+    expect(res.status).toBe(201);
+
+    const ride = await env.DB.prepare(
+      "SELECT workout_id FROM rides WHERE ride_uuid = ?"
+    ).bind(rideUuid).first<{ workout_id: string | null }>();
+    expect(ride?.workout_id).toBeNull();
   });
 });

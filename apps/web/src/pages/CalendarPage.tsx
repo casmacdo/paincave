@@ -15,6 +15,7 @@ export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
   const [rides, setRides] = useState<RideRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const now = new Date();
   const start = isoDateOffset(now, -7);
@@ -41,6 +42,42 @@ export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
       active = false;
     };
   }, [start, end]);
+
+  const handleDeleteSession = async (session: PlannedSessionRecord) => {
+    if (!window.confirm(`Remove "${session.workout_name}" from ${session.scheduled_date}?`)) {
+      return;
+    }
+    setDeletingId(session.id);
+    setError(null);
+    try {
+      await api.deleteCalendarSession(session.id);
+      setSessions((current) => current.filter((item) => item.id !== session.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete planned workout");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleDeleteRide = async (ride: RideRecord) => {
+    if (
+      !window.confirm(
+        `Delete "${ride.name}" (${ride.ride_day})?\n\nThis removes the ride, FIT file, and PMC contribution. It does not remove a Strava activity already uploaded.`
+      )
+    ) {
+      return;
+    }
+    setDeletingId(ride.ride_uuid);
+    setError(null);
+    try {
+      await api.deleteRide(ride.ride_uuid);
+      setRides((current) => current.filter((item) => item.ride_uuid !== ride.ride_uuid));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete ride");
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -101,13 +138,23 @@ export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
                       <p className="mt-1 text-xs text-zinc-400">{s.coach_rationale}</p>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void onLoadWorkout(s.workout_id, s.id)}
-                    className="rounded-lg bg-orange-500 px-3.5 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400"
-                  >
-                    Load on Trainer
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void onLoadWorkout(s.workout_id, s.id)}
+                      className="rounded-lg bg-orange-500 px-3.5 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400"
+                    >
+                      Load on Trainer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteSession(s)}
+                      disabled={deletingId === s.id}
+                      className="rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-300 hover:border-rose-400 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {deletingId === s.id ? "Removing..." : "Remove"}
+                    </button>
+                  </div>
                 </div>
               ))
             )}
@@ -126,7 +173,17 @@ export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
                 <div key={r.ride_uuid} className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-mono text-zinc-400">{r.ride_day}</span>
-                    <span className="text-xs text-zinc-500">{r.source}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-zinc-500">{r.source}</span>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteRide(r)}
+                        disabled={deletingId === r.ride_uuid}
+                        className="rounded-lg border border-rose-500/40 px-2.5 py-1.5 text-xs font-semibold text-rose-300 hover:border-rose-400 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {deletingId === r.ride_uuid ? "Deleting..." : "Delete"}
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-1 font-semibold text-white">{r.name}</div>
                   <div className="mt-1 text-xs text-zinc-400">

@@ -171,6 +171,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(spec),
     }),
+  deleteWorkout: (id: string) =>
+    requestJson<{ ok: boolean }>(`/api/workouts/${id}`, { method: "DELETE" }),
   getFlattenedWorkout: (id: string) =>
     requestJson<{
       workout_id: string;
@@ -187,8 +189,12 @@ export const api = {
       planned_sessions: PlannedSessionRecord[];
       completed_rides: RideRecord[];
     }>(`/api/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
+  deleteCalendarSession: (id: string) =>
+    requestJson<{ ok: boolean }>(`/api/calendar/sessions/${id}`, { method: "DELETE" }),
 
   getRides: (limit = 30) => requestJson<{ rides: RideRecord[] }>(`/api/rides?limit=${limit}`),
+  deleteRide: (uuid: string) =>
+    requestJson<{ ok: boolean }>(`/api/rides/${uuid}`, { method: "DELETE" }),
   getRideDetail: (uuid: string) =>
     requestJson<{
       ride: RideRecord;

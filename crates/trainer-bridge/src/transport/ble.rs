@@ -1,10 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use tokio::sync::{Notify, RwLock};
+use tokio::task::AbortHandle;
 use zbus::Connection;
 use zbus::fdo::{ObjectManagerProxy, PropertiesProxy};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
@@ -41,8 +42,17 @@ struct BleSharedState {
     hr_last_seen: Option<Instant>,
     trainer_connected: bool,
     hr_connected: bool,
+    trainer_device_path: Option<String>,
+    hr_device_path: Option<String>,
     control_point: Option<(Connection, OwnedObjectPath)>,
-    subscribed_chars: HashSet<String>,
+    subscribed_chars: HashMap<String, NotifySubscription>,
+    next_subscription_id: u64,
+}
+
+#[derive(Debug)]
+struct NotifySubscription {
+    id: u64,
+    abort_handle: AbortHandle,
 }
 
 pub struct BleTransport {
@@ -99,22 +109,13 @@ impl TrainerTransport for BleTransport {
 
     async fn read_sample(&self) -> (RawSensorSample, SensorStatus) {
         let guard = self.state.read().await;
-        let trainer_fresh = guard.trainer_connected
-            && guard
-                .trainer_last_seen
-                .is_some_and(|ts| ts.elapsed() <= SAMPLE_STALE_AFTER);
-        let hr_fresh = guard.hr_connected
-            && guard
-                .hr_last_seen
-                .is_some_and(|ts| ts.elapsed() <= SAMPLE_STALE_AFTER);
-
         let status = SensorStatus {
-            trainer: if trainer_fresh {
+            trainer: if guard.trainer_connected {
                 SensorConnectionState::Connected
             } else {
                 SensorConnectionState::Disconnected
             },
-            hr: if hr_fresh {
+            hr: if guard.hr_connected {
                 SensorConnectionState::Connected
             } else {
                 SensorConnectionState::Disconnected
@@ -194,6 +195,27 @@ async fn ble_supervisor_loop(state: Arc<RwLock<BleSharedState>>, scan_notify: Ar
     }
 }
 
+fn is_device_connected_in_objects(
+    objects: &zbus::fdo::ManagedObjects,
+    device_path: Option<&str>,
+) -> bool {
+    let Some(path_str) = device_path else {
+        return false;
+    };
+    let Ok(obj_path) = OwnedObjectPath::try_from(path_str) else {
+        return false;
+    };
+    let Ok(dev_iface) = zbus::names::InterfaceName::try_from(DEVICE_IFACE) else {
+        return false;
+    };
+    objects
+        .get(&obj_path)
+        .and_then(|ifaces| ifaces.get(&dev_iface))
+        .and_then(|props| props.get("Connected"))
+        .and_then(|v| bool::try_from(v).ok())
+        .unwrap_or(false)
+}
+
 async fn run_ble_session(
     conn: &Connection,
     state: &Arc<RwLock<BleSharedState>>,
@@ -205,56 +227,95 @@ async fn run_ble_session(
         .build()
         .await?;
 
+    let mut cycle: u32 = 0;
+    let mut manual_scan_requested = false;
+
     loop {
-        let objects = obj_mgr.get_managed_objects().await?;
+        let mut objects = obj_mgr.get_managed_objects().await?;
         let Some(adapter_path) = find_first_adapter(&objects) else {
             tracing::debug!("No BlueZ adapter available yet");
             tokio::time::sleep(Duration::from_secs(5)).await;
             continue;
         };
 
+        // Reconcile actual BlueZ connection state on every cycle so disconnects are detected immediately
         let (need_trainer, need_hr) = {
-            let guard = state.read().await;
-            let trainer_ok = guard.trainer_connected
-                && guard
-                    .trainer_last_seen
-                    .is_some_and(|ts| ts.elapsed() <= SAMPLE_STALE_AFTER);
-            let hr_ok = guard.hr_connected
-                && guard
-                    .hr_last_seen
-                    .is_some_and(|ts| ts.elapsed() <= SAMPLE_STALE_AFTER);
-            (!trainer_ok, !hr_ok)
+            let mut guard = state.write().await;
+            if guard.trainer_connected
+                && !is_device_connected_in_objects(&objects, guard.trainer_device_path.as_deref())
+            {
+                tracing::info!("FTMS trainer disconnected in BlueZ");
+                let device_path = guard.trainer_device_path.clone();
+                clear_device_subscriptions(&mut guard, device_path.as_deref());
+                guard.trainer_connected = false;
+                guard.trainer_device_path = None;
+                guard.control_point = None;
+            }
+            if guard.hr_connected
+                && !is_device_connected_in_objects(&objects, guard.hr_device_path.as_deref())
+            {
+                tracing::info!("BLE Heart Rate sensor disconnected in BlueZ");
+                let device_path = guard.hr_device_path.clone();
+                clear_device_subscriptions(&mut guard, device_path.as_deref());
+                guard.hr_connected = false;
+                guard.hr_device_path = None;
+            }
+            (!guard.trainer_connected, !guard.hr_connected)
         };
 
         if need_trainer || need_hr {
-            if let Ok(adapter) =
-                zbus::Proxy::new(conn, BLUEZ_SERVICE, adapter_path.clone(), ADAPTER_IFACE).await
+            let known_before = extract_relevant_devices(&objects);
+            let missing_ftms = need_trainer && !known_before.iter().any(|d| d.is_ftms);
+            let missing_hr = need_hr && !known_before.iter().any(|d| d.is_hr);
+            let run_discovery =
+                manual_scan_requested || missing_ftms || missing_hr || cycle.is_multiple_of(4);
+            manual_scan_requested = false;
+            let mut stop_discovery = false;
+
+            if run_discovery
+                && let Ok(adapter) =
+                    zbus::Proxy::new(conn, BLUEZ_SERVICE, adapter_path.clone(), ADAPTER_IFACE).await
             {
-                let _ = adapter.call::<_, _, ()>("StartDiscovery", &()).await;
-                tokio::time::sleep(Duration::from_secs(4)).await;
-                let _ = adapter.call::<_, _, ()>("StopDiscovery", &()).await;
+                stop_discovery = adapter
+                    .call::<_, _, ()>("StartDiscovery", &())
+                    .await
+                    .is_ok();
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                objects = obj_mgr.get_managed_objects().await?;
             }
 
-            let refreshed = obj_mgr.get_managed_objects().await?;
-            let candidates = extract_relevant_devices(&refreshed);
-
+            let candidates = extract_relevant_devices(&objects);
             for dev in candidates {
                 let want_dev = (need_trainer && dev.is_ftms) || (need_hr && dev.is_hr);
                 if !want_dev {
                     continue;
                 }
                 if let Err(err) = ensure_device_connected(conn, &dev).await {
-                    tracing::debug!(device = %dev.name, address = %dev.address, error = %err, "BLE connect failed");
+                    tracing::warn!(
+                        device = %dev.name,
+                        address = %dev.address,
+                        error = %err,
+                        "BLE connect failed"
+                    );
                     continue;
                 }
                 let post_connect_objects = obj_mgr.get_managed_objects().await?;
                 bind_device_characteristics(conn, &dev, &post_connect_objects, state).await;
             }
+
+            if stop_discovery
+                && let Ok(adapter) =
+                    zbus::Proxy::new(conn, BLUEZ_SERVICE, adapter_path, ADAPTER_IFACE).await
+            {
+                let _ = adapter.call::<_, _, ()>("StopDiscovery", &()).await;
+            }
         }
 
+        cycle = cycle.wrapping_add(1);
         tokio::select! {
             _ = scan_notify.notified() => {
                 tracing::info!("Manual BLE sensor rescan requested");
+                manual_scan_requested = true;
             }
             _ = tokio::time::sleep(Duration::from_secs(5)) => {}
         }
@@ -265,9 +326,23 @@ async fn ensure_device_connected(
     conn: &Connection,
     dev: &DiscoveredBleDevice,
 ) -> anyhow::Result<()> {
-    let dev_proxy =
-        zbus::Proxy::new(conn, BLUEZ_SERVICE, dev.object_path.as_str(), DEVICE_IFACE).await?;
-    if !dev.connected {
+    let props = PropertiesProxy::builder(conn)
+        .destination(BLUEZ_SERVICE)?
+        .path(dev.object_path.as_str())?
+        .build()
+        .await?;
+    let iface_name: zbus::names::InterfaceName<'_> = DEVICE_IFACE.try_into()?;
+
+    let already_connected = props
+        .get(iface_name.clone(), "Connected")
+        .await
+        .ok()
+        .and_then(|v| bool::try_from(v).ok())
+        .unwrap_or(dev.connected);
+
+    if !already_connected {
+        let dev_proxy =
+            zbus::Proxy::new(conn, BLUEZ_SERVICE, dev.object_path.as_str(), DEVICE_IFACE).await?;
         tokio::time::timeout(
             Duration::from_secs(10),
             dev_proxy.call::<_, _, ()>("Connect", &()),
@@ -275,22 +350,29 @@ async fn ensure_device_connected(
         .await??;
     }
 
-    let props = PropertiesProxy::builder(conn)
-        .destination(BLUEZ_SERVICE)?
-        .path(dev.object_path.as_str())?
-        .build()
-        .await?;
-
-    let iface_name: zbus::names::InterfaceName<'_> = DEVICE_IFACE.try_into()?;
-    for _ in 0..20 {
-        if let Ok(val) = props.get(iface_name.clone(), "ServicesResolved").await
-            && bool::try_from(val).unwrap_or(false)
-        {
+    for _ in 0..30 {
+        let is_conn = props
+            .get(iface_name.clone(), "Connected")
+            .await
+            .ok()
+            .and_then(|v| bool::try_from(v).ok())
+            .unwrap_or(false);
+        if !is_conn {
+            anyhow::bail!("Device disconnected while resolving GATT services");
+        }
+        let resolved = props
+            .get(iface_name.clone(), "ServicesResolved")
+            .await
+            .ok()
+            .and_then(|v| bool::try_from(v).ok())
+            .unwrap_or(false);
+        if resolved {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
-    Ok(())
+
+    anyhow::bail!("Timed out waiting for BlueZ ServicesResolved=true");
 }
 
 async fn bind_device_characteristics(
@@ -303,13 +385,14 @@ async fn bind_device_characteristics(
 
     if dev.is_ftms {
         if let Some(cp_path) = chars.get(FTMS_CONTROL_POINT_UUID) {
+            let mut cp_ok = false;
             if let Ok(cp_proxy) =
                 zbus::Proxy::new(conn, BLUEZ_SERVICE, cp_path.clone(), GATT_CHAR_IFACE).await
             {
                 let _ = cp_proxy.call::<_, _, ()>("StartNotify", &()).await;
             }
             if let Ok(req) = encode_request_control() {
-                let _ = gatt_write_value(conn, cp_path, &req).await;
+                cp_ok = gatt_write_value(conn, cp_path, &req).await.is_ok();
             }
             if let Ok(start) = encode_start_or_resume() {
                 let _ = gatt_write_value(conn, cp_path, &start).await;
@@ -317,39 +400,40 @@ async fn bind_device_characteristics(
             let mut guard = state.write().await;
             guard.control_point = Some((conn.clone(), cp_path.clone()));
             guard.trainer_connected = true;
-            tracing::info!(device = %dev.name, address = %dev.address, "Connected FTMS trainer control point");
+            guard.trainer_device_path = Some(dev.object_path.clone());
+            tracing::info!(
+                device = %dev.name,
+                address = %dev.address,
+                control_acquired = cp_ok,
+                "Connected FTMS trainer control point"
+            );
         }
 
         if let Some(ibd_path) = chars.get(FTMS_INDOOR_BIKE_DATA_UUID) {
-            let key = ibd_path.as_str().to_string();
-            let already = state.read().await.subscribed_chars.contains(&key);
-            if !already {
-                state.write().await.subscribed_chars.insert(key.clone());
-                spawn_notify_listener(
-                    conn.clone(),
-                    ibd_path.clone(),
-                    NotifyKind::FtmsIndoorBike,
-                    Arc::clone(state),
-                );
-            }
+            spawn_notify_listener(
+                conn.clone(),
+                ibd_path.clone(),
+                dev.object_path.clone(),
+                dev.name.clone(),
+                NotifyKind::FtmsIndoorBike,
+                Arc::clone(state),
+            )
+            .await;
         }
     }
 
     if dev.is_hr
         && let Some(hr_path) = chars.get(HR_MEASUREMENT_UUID)
     {
-        let key = hr_path.as_str().to_string();
-        let already = state.read().await.subscribed_chars.contains(&key);
-        if !already {
-            state.write().await.subscribed_chars.insert(key.clone());
-            spawn_notify_listener(
-                conn.clone(),
-                hr_path.clone(),
-                NotifyKind::HeartRate,
-                Arc::clone(state),
-            );
-            tracing::info!(device = %dev.name, address = %dev.address, "Subscribed BLE Heart Rate sensor");
-        }
+        spawn_notify_listener(
+            conn.clone(),
+            hr_path.clone(),
+            dev.object_path.clone(),
+            dev.name.clone(),
+            NotifyKind::HeartRate,
+            Arc::clone(state),
+        )
+        .await;
     }
 }
 
@@ -359,34 +443,154 @@ enum NotifyKind {
     HeartRate,
 }
 
-fn spawn_notify_listener(
+fn clear_device_subscriptions(state: &mut BleSharedState, device_path: Option<&str>) {
+    let Some(device_path) = device_path else {
+        return;
+    };
+    let prefix = format!("{device_path}/");
+    let keys = state
+        .subscribed_chars
+        .keys()
+        .filter(|path| path.starts_with(&prefix))
+        .cloned()
+        .collect::<Vec<_>>();
+    for key in keys {
+        if let Some(subscription) = state.subscribed_chars.remove(&key) {
+            subscription.abort_handle.abort();
+        }
+    }
+}
+
+async fn spawn_notify_listener(
     conn: Connection,
     char_path: OwnedObjectPath,
+    device_path: String,
+    device_name: String,
     kind: NotifyKind,
     state: Arc<RwLock<BleSharedState>>,
 ) {
     let key = char_path.as_str().to_string();
-    tokio::spawn(async move {
-        if let Err(err) = run_notify_listener(&conn, &char_path, kind, &state).await {
-            tracing::warn!(characteristic = %key, error = %err, "BLE GATT notify stream ended");
+    let mut guard = state.write().await;
+    if guard.subscribed_chars.contains_key(&key) {
+        return;
+    }
+
+    guard.next_subscription_id = guard.next_subscription_id.wrapping_add(1);
+    let subscription_id = guard.next_subscription_id;
+    let listener_state = Arc::clone(&state);
+    let listener_key = key.clone();
+    let handle = tokio::spawn(async move {
+        if let Err(err) = run_notify_listener(
+            &conn,
+            &char_path,
+            &device_path,
+            &device_name,
+            kind,
+            &listener_state,
+        )
+        .await
+        {
+            tracing::warn!(
+                device = %device_name,
+                characteristic = %listener_key,
+                error = %err,
+                "BLE GATT notify stream ended"
+            );
         }
-        let mut guard = state.write().await;
-        guard.subscribed_chars.remove(&key);
+        let mut guard = listener_state.write().await;
+        let is_current = guard
+            .subscribed_chars
+            .get(&listener_key)
+            .is_some_and(|subscription| subscription.id == subscription_id);
+        if !is_current {
+            return;
+        }
+        guard.subscribed_chars.remove(&listener_key);
         match kind {
             NotifyKind::FtmsIndoorBike => {
                 guard.trainer_connected = false;
+                guard.trainer_device_path = None;
                 guard.control_point = None;
             }
             NotifyKind::HeartRate => {
                 guard.hr_connected = false;
+                guard.hr_device_path = None;
             }
         }
     });
+    guard.subscribed_chars.insert(
+        key,
+        NotifySubscription {
+            id: subscription_id,
+            abort_handle: handle.abort_handle(),
+        },
+    );
+}
+
+async fn apply_notify_bytes(
+    state: &Arc<RwLock<BleSharedState>>,
+    kind: NotifyKind,
+    bytes: &[u8],
+    logged_first: &mut bool,
+    device_name: &str,
+) {
+    let mut guard = state.write().await;
+    match kind {
+        NotifyKind::FtmsIndoorBike => {
+            if let Ok(parsed) = parse_indoor_bike_data(bytes) {
+                if let Some(w) = parsed.watts {
+                    guard.sample.watts = Some(w);
+                }
+                if let Some(cad) = parsed.cadence_rpm {
+                    guard.sample.cadence_rpm = Some(cad);
+                }
+                if let Some(spd) = parsed.speed_kph {
+                    guard.sample.speed_kph = Some(spd);
+                }
+                if let Some(hr) = parsed.hr_bpm
+                    && guard
+                        .hr_last_seen
+                        .is_none_or(|ts| ts.elapsed() > SAMPLE_STALE_AFTER)
+                {
+                    guard.sample.hr_bpm = Some(hr);
+                }
+                guard.trainer_last_seen = Some(Instant::now());
+                guard.trainer_connected = true;
+                if !*logged_first {
+                    *logged_first = true;
+                    tracing::info!(
+                        device = %device_name,
+                        watts = ?parsed.watts,
+                        cadence = ?parsed.cadence_rpm,
+                        speed_kph = ?parsed.speed_kph,
+                        "Receiving FTMS Indoor Bike Data telemetry"
+                    );
+                }
+            }
+        }
+        NotifyKind::HeartRate => {
+            if let Some(hr) = parse_heart_rate_measurement(bytes) {
+                guard.sample.hr_bpm = Some(hr);
+                guard.hr_last_seen = Some(Instant::now());
+                guard.hr_connected = true;
+                if !*logged_first {
+                    *logged_first = true;
+                    tracing::info!(
+                        device = %device_name,
+                        hr_bpm = hr,
+                        "Receiving BLE Heart Rate telemetry"
+                    );
+                }
+            }
+        }
+    }
 }
 
 async fn run_notify_listener(
     conn: &Connection,
     char_path: &OwnedObjectPath,
+    device_path: &str,
+    device_name: &str,
     kind: NotifyKind,
     state: &Arc<RwLock<BleSharedState>>,
 ) -> anyhow::Result<()> {
@@ -401,6 +605,37 @@ async fn run_notify_listener(
         zbus::Proxy::new(conn, BLUEZ_SERVICE, char_path.clone(), GATT_CHAR_IFACE).await?;
     char_proxy.call::<_, _, ()>("StartNotify", &()).await?;
 
+    {
+        let mut guard = state.write().await;
+        match kind {
+            NotifyKind::FtmsIndoorBike => {
+                guard.trainer_connected = true;
+                guard.trainer_device_path = Some(device_path.to_string());
+                guard.trainer_last_seen = Some(Instant::now());
+            }
+            NotifyKind::HeartRate => {
+                guard.hr_connected = true;
+                guard.hr_device_path = Some(device_path.to_string());
+                guard.hr_last_seen = Some(Instant::now());
+            }
+        }
+    }
+    tracing::info!(
+        device = %device_name,
+        characteristic = %char_path.as_str(),
+        "Subscribed BLE GATT notifications"
+    );
+
+    let mut logged_first = false;
+    if let Ok(char_iface) = zbus::names::InterfaceName::try_from(GATT_CHAR_IFACE)
+        && let Ok(initial_val) = props.get(char_iface, "Value").await
+    {
+        let initial_bytes = extract_byte_array(&Value::from(initial_val));
+        if !initial_bytes.is_empty() {
+            apply_notify_bytes(state, kind, &initial_bytes, &mut logged_first, device_name).await;
+        }
+    }
+
     while let Some(signal) = stream.next().await {
         let Ok(args) = signal.args() else {
             continue;
@@ -413,40 +648,7 @@ async fn run_notify_listener(
         if bytes.is_empty() {
             continue;
         }
-
-        let mut guard = state.write().await;
-        match kind {
-            NotifyKind::FtmsIndoorBike => {
-                if let Ok(parsed) = parse_indoor_bike_data(&bytes) {
-                    if let Some(w) = parsed.watts {
-                        guard.sample.watts = Some(w);
-                    }
-                    if let Some(cad) = parsed.cadence_rpm {
-                        guard.sample.cadence_rpm = Some(cad);
-                    }
-                    if let Some(spd) = parsed.speed_kph {
-                        guard.sample.speed_kph = Some(spd);
-                    }
-                    // Use trainer-relayed HR only when no dedicated chest strap is fresh
-                    if let Some(hr) = parsed.hr_bpm
-                        && guard
-                            .hr_last_seen
-                            .is_none_or(|ts| ts.elapsed() > SAMPLE_STALE_AFTER)
-                    {
-                        guard.sample.hr_bpm = Some(hr);
-                    }
-                    guard.trainer_last_seen = Some(Instant::now());
-                    guard.trainer_connected = true;
-                }
-            }
-            NotifyKind::HeartRate => {
-                if let Some(hr) = parse_heart_rate_measurement(&bytes) {
-                    guard.sample.hr_bpm = Some(hr);
-                    guard.hr_last_seen = Some(Instant::now());
-                    guard.hr_connected = true;
-                }
-            }
-        }
+        apply_notify_bytes(state, kind, &bytes, &mut logged_first, device_name).await;
     }
 
     Ok(())
@@ -556,14 +758,30 @@ fn extract_string_array(val: Option<&OwnedValue>) -> Vec<String> {
 }
 
 fn extract_byte_array(val: &Value<'_>) -> Vec<u8> {
-    if let Value::Array(arr) = val {
-        return arr
+    match val {
+        Value::Array(arr) => arr
             .iter()
             .filter_map(|item| match item {
                 Value::U8(b) => Some(*b),
                 _ => None,
             })
-            .collect();
+            .collect(),
+        Value::Value(inner) => extract_byte_array(inner),
+        _ => Vec::new(),
     }
-    Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_byte_array;
+    use zbus::zvariant::Value;
+
+    #[test]
+    fn extract_byte_array_unwraps_direct_and_variant_arrays() {
+        let direct = Value::from(vec![68u8, 0, 120, 0]);
+        assert_eq!(extract_byte_array(&direct), vec![68, 0, 120, 0]);
+
+        let wrapped = Value::Value(Box::new(Value::from(vec![0x06u8, 142])));
+        assert_eq!(extract_byte_array(&wrapped), vec![0x06, 142]);
+    }
 }

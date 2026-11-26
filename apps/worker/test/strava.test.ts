@@ -2,6 +2,8 @@ import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import goldenRide from "../../../packages/shared/fixtures/golden-ride.json" with { type: "json" };
 
+const testEnv = env as typeof env & { PUBLIC_APP_URL?: string };
+
 async function loginCookie(): Promise<string> {
   const res = await exports.default.fetch("https://paincave.test/api/auth/login", {
     method: "POST",
@@ -39,6 +41,9 @@ describe("Strava Outbound OAuth & Background FIT Upload", () => {
     expect(location).toBeTruthy();
     const authUrl = new URL(location ?? "");
     expect(`${authUrl.origin}${authUrl.pathname}`).toBe("https://www.strava.com/oauth/authorize");
+    expect(authUrl.searchParams.get("redirect_uri")).toBe(
+      "https://paincave.test/api/strava/callback"
+    );
     const stateNonce = authUrl.searchParams.get("state") ?? "";
     expect(stateNonce.length).toBeGreaterThanOrEqual(24);
 
@@ -236,7 +241,7 @@ describe("Strava Outbound OAuth & Background FIT Upload", () => {
       `https://paincave.test/api/strava/retry/${rideUuid}`,
       {
         method: "POST",
-        headers: { Cookie: cookie },
+        headers: { "X-Bridge-Token": env.BRIDGE_DEVICE_TOKEN ?? "" },
       }
     );
     expect(retryRes.status).toBe(200);
@@ -245,5 +250,38 @@ describe("Strava Outbound OAuth & Background FIT Upload", () => {
     expect(retryBody.upload_id).toBe("424242");
     expect(refreshCalls).toBe(1);
     expect(uploadCalls).toBe(2);
+  });
+
+  it("uses the configured public app URL for the Strava callback", async () => {
+    const cookie = await loginCookie();
+    const previousPublicAppUrl = testEnv.PUBLIC_APP_URL;
+    testEnv.PUBLIC_APP_URL = "https://paincave.example.workers.dev";
+
+    try {
+      const connectRes = await exports.default.fetch(
+        "http://127.0.0.1:8787/api/strava/connect",
+        { headers: { Cookie: cookie }, redirect: "manual" }
+      );
+      expect(connectRes.status).toBe(302);
+      const authUrl = new URL(connectRes.headers.get("Location") ?? "");
+      expect(authUrl.searchParams.get("redirect_uri")).toBe(
+        "https://paincave.example.workers.dev/api/strava/callback"
+      );
+    } finally {
+      testEnv.PUBLIC_APP_URL = previousPublicAppUrl;
+    }
+  });
+
+  it("allows the trainer bridge to start Strava OAuth", async () => {
+    const res = await exports.default.fetch(
+      "https://paincave.test/api/strava/connect?mode=json",
+      { headers: { "X-Bridge-Token": env.BRIDGE_DEVICE_TOKEN ?? "" } }
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json<{ authorize_url: string }>();
+    const authUrl = new URL(body.authorize_url);
+    expect(`${authUrl.origin}${authUrl.pathname}`).toBe(
+      "https://www.strava.com/oauth/authorize"
+    );
   });
 });

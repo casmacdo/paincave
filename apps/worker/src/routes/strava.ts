@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import type { HonoAppContext } from "../types.js";
-import { generateSecureToken, requireUiAuth, sha256Hex } from "../lib/auth.js";
+import {
+  generateSecureToken,
+  requireBridgeOrUiAuth,
+  requireUiAuth,
+  sha256Hex,
+} from "../lib/auth.js";
 import {
   buildStravaAuthorizeUrl,
   exchangeStravaCode,
@@ -25,7 +30,7 @@ export function createStravaRoutes(): Hono<HonoAppContext> {
     });
   });
 
-  router.get("/connect", requireUiAuth, async (c) => {
+  router.get("/connect", requireBridgeOrUiAuth, async (c) => {
     if (!isStravaConfigured(c.env)) {
       return c.json(
         { error: "Strava integration unavailable: STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET are not set" },
@@ -43,8 +48,12 @@ export function createStravaRoutes(): Hono<HonoAppContext> {
       .bind(stateHash, nowS + STRAVA_STATE_TTL_S)
       .run();
 
-    const origin = new URL(c.req.url).origin;
-    const authorizeUrl = buildStravaAuthorizeUrl(c.env, `${origin}/api/strava/callback`, nonce);
+    const publicAppUrl = c.env.PUBLIC_APP_URL?.trim();
+    const callbackUrl = new URL(
+      "/api/strava/callback",
+      publicAppUrl || new URL(c.req.url).origin
+    ).toString();
+    const authorizeUrl = buildStravaAuthorizeUrl(c.env, callbackUrl, nonce);
 
     if (c.req.query("mode") === "json") {
       return c.json({ authorize_url: authorizeUrl });
@@ -104,7 +113,7 @@ export function createStravaRoutes(): Hono<HonoAppContext> {
     }
   });
 
-  router.post("/retry/:ride_uuid", requireUiAuth, async (c) => {
+  router.post("/retry/:ride_uuid", requireBridgeOrUiAuth, async (c) => {
     const rideUuid = c.req.param("ride_uuid");
     if (!rideUuid) {
       return c.json({ error: "Missing ride_uuid" }, 400);

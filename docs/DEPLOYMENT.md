@@ -174,11 +174,32 @@ PAINCAVE_DATA_DIR=$HOME/.local/share/paincave
 
 ### 6.3 Deploy Binary & Systemd User Service
 
-From your build workstation (or run locally on the basement PC):
+From the Linux build workstation, use an SSH destination that accepts key-based login:
 
 ```bash
 BASEMENT_HOST=user@basement-pc ./scripts/deploy-basement.sh
 ```
+
+For development, keep this running on the laptop:
+
+```bash
+BASEMENT_HOST=user@basement-pc ./scripts/deploy-basement.sh --watch
+```
+
+The watcher deploys the current checkout on startup and after bridge files change,
+including uncommitted edits. It runs the bridge tests on the laptop, builds a release
+binary for the remote host, and sends the binary and systemd unit over SSH. It checks
+the running bridge's workout state before switching versions and retries deferred or
+failed updates. Ctrl-C stops the watcher. Web and Worker edits use the Cloudflare
+deployment in section 4.
+
+For a Raspberry Pi with a 64-bit OS, install the `aarch64-unknown-linux-gnu` Rust
+target and `aarch64-linux-gnu-gcc` cross-compiler on the laptop. A 32-bit hard-float
+OS on an ARMv7-capable Pi uses `armv7-unknown-linux-gnueabihf` and
+`arm-linux-gnueabihf-gcc`. The target system must support the runtime libraries used
+by the build. Deployment checks that the binary can launch before replacing the old
+version. The trainer PC needs the configuration from section 6.2 and a running systemd
+user manager. Open the hosted PWA on that same computer to reach its loopback bridge.
 
 Enable lingering so the user service keeps running across logins (optional):
 

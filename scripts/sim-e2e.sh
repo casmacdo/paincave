@@ -89,6 +89,19 @@ WORKER_PID=$!
 
 wait_for_http "http://127.0.0.1:8787/api/health" "Cloudflare Worker" 60
 
+# Browser navigations must reach the OAuth handlers through the assets router.
+# A signed-out connect returns 401 and a callback without an OAuth code returns 400.
+for route in connect callback; do
+  expected=401
+  if [[ "$route" == callback ]]; then expected=400; fi
+  response=$(curl -sS -o /dev/null -w '%{http_code}' -H 'Sec-Fetch-Mode: navigate' \
+    -H 'Accept: text/html' "http://127.0.0.1:8787/api/strava/$route")
+  if [[ "$response" != "$expected" ]]; then
+    echo "Strava $route navigation returned $response, expected $expected" >&2
+    exit 1
+  fi
+done
+
 echo "==> [sim-e2e] Starting trainer-bridge in accelerated mock mode (60x)"
 PAINCAVE_API_URL="http://127.0.0.1:8787" \
 PAINCAVE_BRIDGE_PORT="8765" \

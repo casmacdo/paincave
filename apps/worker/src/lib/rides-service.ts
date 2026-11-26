@@ -90,6 +90,22 @@ export async function ingestRide(
     };
   }
 
+  let workoutId: string | null = null;
+  if (summary.workout_id) {
+    const workout = await env.DB.prepare(
+      "SELECT id FROM workouts WHERE id = ?"
+    ).bind(summary.workout_id).first<{ id: string }>();
+    workoutId = workout?.id ?? null;
+  }
+
+  let plannedSessionId: string | null = null;
+  if (summary.planned_session_id) {
+    const plannedSession = await env.DB.prepare(
+      "SELECT id FROM planned_sessions WHERE id = ?"
+    ).bind(summary.planned_session_id).first<{ id: string }>();
+    plannedSessionId = plannedSession?.id ?? null;
+  }
+
   const r2Key = buildFitR2Key(summary.ride_day, summary.ride_uuid);
   const fitSize = fitBytes ? fitBytes.byteLength : 0;
 
@@ -136,7 +152,7 @@ export async function ingestRide(
       summary.ride_uuid,
       summary.name,
       summary.source,
-      summary.workout_id ?? null,
+      workoutId,
       summary.started_at,
       summary.ride_day,
       r2Key,
@@ -209,14 +225,14 @@ export async function ingestRide(
     );
   }
 
-  if (summary.planned_session_id) {
+  if (plannedSessionId) {
     batch.push(
       env.DB.prepare(
         `UPDATE planned_sessions
          SET status = 'completed', completed_ride_uuid = ?,
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
          WHERE id = ?`
-      ).bind(summary.ride_uuid, summary.planned_session_id)
+      ).bind(summary.ride_uuid, plannedSessionId)
     );
   }
 

@@ -13,6 +13,15 @@ use paincave_bridge::uploader::UploaderConfig;
 
 pub const DEFAULT_BRIDGE_PORT: u16 = 8765;
 
+fn derive_allowed_origin(api_url: &str) -> Option<String> {
+    let url = reqwest::Url::parse(api_url.trim()).ok()?;
+    if matches!(url.scheme(), "http" | "https") {
+        Some(url.origin().ascii_serialization())
+    } else {
+        None
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "trainer-bridge",
@@ -79,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 Arc::new(BleTransport::new())
             };
+            let allowed_origin = allowed_origin.or_else(|| derive_allowed_origin(&api_url));
             let db_path = data_dir.join("bridge.db");
             let store = SqliteStore::open(&db_path)?;
             let uploader_cfg = UploaderConfig {
@@ -139,10 +149,29 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::DEFAULT_BRIDGE_PORT;
+    use super::{DEFAULT_BRIDGE_PORT, derive_allowed_origin};
 
     #[test]
     fn default_port_matches_architecture_spec() {
         assert_eq!(DEFAULT_BRIDGE_PORT, 8765);
+    }
+
+    #[test]
+    fn derives_worker_origin_from_api_url() {
+        assert_eq!(
+            derive_allowed_origin("https://paincave.example.workers.dev"),
+            Some("https://paincave.example.workers.dev".to_string())
+        );
+        assert_eq!(
+            derive_allowed_origin("https://paincave.example.workers.dev/api/rides"),
+            Some("https://paincave.example.workers.dev".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_empty_and_non_http_api_urls() {
+        assert_eq!(derive_allowed_origin(""), None);
+        assert_eq!(derive_allowed_origin("ftp://example.com"), None);
+        assert_eq!(derive_allowed_origin("not a url"), None);
     }
 }

@@ -10,8 +10,18 @@ pub const FTMS_SERVICE_UUID: &str = "00001826-0000-1000-8000-00805f9b34fb";
 pub const FTMS_INDOOR_BIKE_DATA_UUID: &str = "00002ad2-0000-1000-8000-00805f9b34fb";
 pub const FTMS_CONTROL_POINT_UUID: &str = "00002ad9-0000-1000-8000-00805f9b34fb";
 
+pub const CYCLING_POWER_SERVICE_UUID: &str = "00001818-0000-1000-8000-00805f9b34fb";
+pub const CYCLING_POWER_MEASUREMENT_UUID: &str = "00002a63-0000-1000-8000-00805f9b34fb";
+
 pub const HR_SERVICE_UUID: &str = "0000180d-0000-1000-8000-00805f9b34fb";
 pub const HR_MEASUREMENT_UUID: &str = "00002a37-0000-1000-8000-00805f9b34fb";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CyclingPowerSample {
+    pub watts: u16,
+    pub crank_revolutions: Option<u16>,
+    pub crank_event_time: Option<u16>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct IndoorBikeSample {
@@ -83,6 +93,46 @@ pub fn parse_indoor_bike_data(bytes: &[u8]) -> Result<IndoorBikeSample, ftms::Er
         cadence_rpm,
         speed_kph,
     })
+}
+
+pub fn parse_cycling_power_measurement(bytes: &[u8]) -> Option<CyclingPowerSample> {
+    let flags = u16::from_le_bytes([*bytes.first()?, *bytes.get(1)?]);
+    let power = i16::from_le_bytes([*bytes.get(2)?, *bytes.get(3)?]);
+    let mut offset: usize = 4;
+
+    for (flag, field_len) in [(0, 1), (2, 2), (4, 6)] {
+        if flags & (1 << flag) != 0 {
+            offset = offset.checked_add(field_len)?;
+            bytes.get(4..offset)?;
+        }
+    }
+
+    let (crank_revolutions, crank_event_time) = if flags & (1 << 5) != 0 {
+        let revs = u16::from_le_bytes([*bytes.get(offset)?, *bytes.get(offset + 1)?]);
+        let event_time = u16::from_le_bytes([*bytes.get(offset + 2)?, *bytes.get(offset + 3)?]);
+        (Some(revs), Some(event_time))
+    } else {
+        (None, None)
+    };
+
+    Some(CyclingPowerSample {
+        watts: power.max(0) as u16,
+        crank_revolutions,
+        crank_event_time,
+    })
+}
+
+pub fn cadence_from_crank_events(previous: (u16, u16), current: (u16, u16)) -> Option<u8> {
+    if current == previous {
+        return Some(0);
+    }
+    let revolutions = current.0.wrapping_sub(previous.0);
+    let event_ticks = current.1.wrapping_sub(previous.1);
+    if event_ticks == 0 {
+        return None;
+    }
+    let rpm = u32::from(revolutions) * 60 * 1024 / u32::from(event_ticks);
+    Some(rpm.min(u32::from(u8::MAX)) as u8)
 }
 
 pub fn parse_heart_rate_measurement(bytes: &[u8]) -> Option<u8> {
@@ -223,6 +273,40 @@ mod tests {
         assert_eq!(parse_heart_rate_measurement(&[0x01, 188, 0x00]), Some(188));
         assert_eq!(parse_heart_rate_measurement(&[0x01, 0x10]), None);
         assert_eq!(parse_heart_rate_measurement(&[]), None);
+    }
+
+    #[test]
+    fn parses_cycling_power_and_crank_revolution_data() -> anyhow::Result<()> {
+        let parsed = parse_cycling_power_measurement(&[
+            0x20, 0x00, 0xfa, 0x00, // crank revolutions present, 250 W
+            10, 0, 0, 4, // 10 revolutions, event time 1024
+        ])
+        .ok_or_else(|| anyhow::anyhow!("expected valid cycling power measurement"))?;
+        assert_eq!(parsed.watts, 250);
+        assert_eq!(parsed.crank_revolutions, Some(10));
+        assert_eq!(parsed.crank_event_time, Some(1024));
+        assert_eq!(cadence_from_crank_events((9, 0), (10, 1024)), Some(60));
+        assert_eq!(
+            cadence_from_crank_events((u16::MAX, 0), (0, 1024)),
+            Some(60)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn skips_optional_cycling_power_fields_and_rejects_truncated_data() -> anyhow::Result<()> {
+        let parsed = parse_cycling_power_measurement(&[
+            0x35, 0x00, 0xc8, 0x00, // balance, torque, wheel and crank data
+            50, 100, 0, // balance and accumulated torque
+            1, 0, 0, 0, 0, 0, // wheel data
+            22, 0, 0, 4, // crank data
+        ])
+        .ok_or_else(|| anyhow::anyhow!("expected valid cycling power measurement"))?;
+        assert_eq!(parsed.watts, 200);
+        assert_eq!(parsed.crank_revolutions, Some(22));
+        assert_eq!(parsed.crank_event_time, Some(1024));
+        assert_eq!(parse_cycling_power_measurement(&[0x20, 0, 100, 0]), None);
+        Ok(())
     }
 
     #[test]

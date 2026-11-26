@@ -1,38 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build and deploy crates/trainer-bridge to the basement Linux machine.
-# Usage:
-#   BASEMENT_HOST=user@basement-pc ./scripts/deploy-basement.sh
-
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
-
-if [[ -z "${BASEMENT_HOST:-}" ]]; then
-  echo "Usage: BASEMENT_HOST=user@basement-pc ./scripts/deploy-basement.sh" >&2
+cd "$(dirname "$0")/.."
+if [[ -z ${BASEMENT_HOST:-} || $BASEMENT_HOST == -* ]]; then
+  echo "Set BASEMENT_HOST to the trainer PC's SSH destination." >&2
   exit 1
 fi
 
-echo "==> Building release binary for trainer-bridge"
-cargo build --release --manifest-path crates/trainer-bridge/Cargo.toml
+if [[ ${1:-} == --watch ]]; then
+  exec python3 scripts/watch-basement.py
+elif (( $# )); then
+  echo "Usage: BASEMENT_HOST=user@trainer-pc scripts/deploy-basement.sh [--watch]" >&2
+  exit 1
+fi
 
-BIN_PATH="$REPO_ROOT/target/release/trainer-bridge"
-UNIT_PATH="$REPO_ROOT/crates/trainer-bridge/systemd/paincave-bridge.service"
+remote=(ssh -o BatchMode=yes -o ConnectTimeout=5 "$BASEMENT_HOST")
+platform=$("${remote[@]}" 'sh -s -- preflight' < scripts/activate-basement.sh)
+case "$platform" in
+  $'Linux x86_64\n64') target=x86_64-unknown-linux-gnu ;;
+  $'Linux aarch64\n64') target=aarch64-unknown-linux-gnu ;;
+  $'Linux armv7l\n32'|$'Linux aarch64\n32') target=armv7-unknown-linux-gnueabihf ;;
+  *) echo "Unsupported trainer PC platform: $platform" >&2; exit 1 ;;
+esac
 
-echo "==> Copying binary and systemd user unit to $BASEMENT_HOST"
-ssh "$BASEMENT_HOST" "mkdir -p ~/.local/bin ~/.config/systemd/user ~/.config/paincave ~/.local/share/paincave"
-scp "$BIN_PATH" "$BASEMENT_HOST:~/.local/bin/trainer-bridge.new"
-scp "$UNIT_PATH" "$BASEMENT_HOST:~/.config/systemd/user/paincave-bridge.service"
+binary_dir=${CARGO_TARGET_DIR:-target}
+args=()
+if [[ $target != "$(rustc -vV | sed -n 's/^host: //p')" ]]; then
+  case $target in
+    aarch64-*) compiler=aarch64-linux-gnu-gcc ;;
+    armv7-*) compiler=arm-linux-gnueabihf-gcc ;;
+    x86_64-*) compiler=x86_64-linux-gnu-gcc ;;
+  esac
+  if ! command -v "$compiler" >/dev/null; then
+    echo "Cross-build needs $compiler and the Rust target $target on the laptop." >&2
+    exit 1
+  fi
+  target_key=${target//-/_}
+  export "CARGO_TARGET_${target_key^^}_LINKER=$compiler"
+  args=(--target "$target")
+  binary_dir="$binary_dir/$target"
+fi
 
-echo "==> Activating binary and restarting paincave-bridge.service"
-ssh "$BASEMENT_HOST" "
-  mv ~/.local/bin/trainer-bridge.new ~/.local/bin/trainer-bridge &&
-  chmod +x ~/.local/bin/trainer-bridge &&
-  systemctl --user daemon-reload &&
-  systemctl --user enable --now paincave-bridge.service &&
-  systemctl --user restart paincave-bridge.service &&
-  sleep 1 &&
-  curl -fsS http://127.0.0.1:8765/health
-"
-echo ""
-echo "==> Basement deployment complete."
+cargo test --locked -p paincave-bridge
+cargo build --locked --release --bin trainer-bridge "${args[@]}"
+
+# Stream both artifacts through the same SSH connection. Each install gets a private
+# staging directory; the running executable is replaced only after preflight.
+tar -cf - -C "$binary_dir/release" trainer-bridge \
+  -C "$PWD/crates/trainer-bridge/systemd" paincave-bridge.service |
+  "${remote[@]}" "$(cat scripts/activate-basement.sh)"

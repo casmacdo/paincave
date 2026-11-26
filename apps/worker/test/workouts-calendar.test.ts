@@ -126,5 +126,19 @@ describe("Workouts & Calendar API", () => {
     expect(calRes.status).toBe(200);
     const calData = await calRes.json<{ planned_sessions: { workout_name: string }[] }>();
     expect(calData.planned_sessions[0]?.workout_name).toBe("Tuesday Sweet Spot 2x15");
+
+    // Archiving removes it from the workout library but preserves ride/calendar history.
+    const deleteRes = await exports.default.fetch(
+      `https://paincave.test/api/workouts/${workout.id}`,
+      { method: "DELETE", headers: { Cookie: cookie } }
+    );
+    expect(deleteRes.status).toBe(200);
+
+    const libraryRes = await exports.default.fetch("https://paincave.test/api/workouts", {
+      headers: { Cookie: cookie },
+    });
+    expect(libraryRes.status).toBe(200);
+    const libraryData = await libraryRes.json<{ workouts: { id: string }[] }>();
+    expect(libraryData.workouts.some((item) => item.id === workout.id)).toBe(false);
   });
 });
