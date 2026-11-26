@@ -122,6 +122,7 @@ pub struct SensorStatus {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum BridgeEvent {
     Telemetry {
         ts_ms: i64,
@@ -143,6 +144,18 @@ pub enum BridgeEvent {
         cadence_rpm: Option<u8>,
         hr_bpm: Option<u8>,
         speed_kph: Option<f64>,
+        #[serde(default)]
+        synthetic_route: bool,
+        #[serde(default)]
+        lat_deg: Option<f64>,
+        #[serde(default)]
+        lon_deg: Option<f64>,
+        #[serde(default)]
+        elevation_m: Option<f64>,
+        #[serde(default)]
+        distance_m: Option<f64>,
+        #[serde(default)]
+        grade_pct: Option<f64>,
         text_cue: Option<String>,
         sensors: SensorStatus,
         pending_uploads: usize,
@@ -172,6 +185,18 @@ pub struct TelemetrySample {
     pub step_index: Option<usize>,
     #[serde(default)]
     pub erg_bias_pct: Option<u16>,
+    #[serde(default)]
+    pub synthetic_route: bool,
+    #[serde(default)]
+    pub lat_deg: Option<f64>,
+    #[serde(default)]
+    pub lon_deg: Option<f64>,
+    #[serde(default)]
+    pub elevation_m: Option<f64>,
+    #[serde(default)]
+    pub distance_m: Option<f64>,
+    #[serde(default)]
+    pub grade_pct: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -280,4 +305,24 @@ pub struct RideUploadSummary {
 
     pub intervals: Vec<IntervalExecution>,
     pub peaks: Vec<MmpPoint>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_telemetry_json_deserializes_with_default_route_fields() -> anyhow::Result<()> {
+        let sample: TelemetrySample = serde_json::from_str(
+            r#"{"t_s":12,"watts":200,"hr_bpm":145,"cadence_rpm":90,"speed_kph":32.4}"#,
+        )?;
+
+        assert!(!sample.synthetic_route);
+        assert_eq!(sample.lat_deg, None);
+        assert_eq!(sample.lon_deg, None);
+        assert_eq!(sample.elevation_m, None);
+        assert_eq!(sample.distance_m, None);
+        assert_eq!(sample.grade_pct, None);
+        Ok(())
+    }
 }

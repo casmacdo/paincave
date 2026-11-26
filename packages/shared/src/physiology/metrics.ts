@@ -11,6 +11,12 @@ export interface TelemetrySample {
   target_watts?: number | null;
   step_index?: number | null;
   erg_bias_pct?: number | null;
+  synthetic_route?: boolean;
+  lat_deg?: number | null;
+  lon_deg?: number | null;
+  elevation_m?: number | null;
+  distance_m?: number | null;
+  grade_pct?: number | null;
 }
 
 export interface AthleteThresholdsSnapshot {

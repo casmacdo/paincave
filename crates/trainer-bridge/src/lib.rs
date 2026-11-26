@@ -2,6 +2,7 @@ pub mod engine;
 pub mod fit;
 pub mod physiology;
 pub mod protocol;
+pub mod route;
 pub mod server;
 pub mod storage;
 pub mod transport;

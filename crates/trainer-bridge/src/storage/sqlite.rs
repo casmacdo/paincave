@@ -244,6 +244,12 @@ mod tests {
                 target_watts: Some(200),
                 step_index: Some(0),
                 erg_bias_pct: Some(100),
+                synthetic_route: false,
+                lat_deg: None,
+                lon_deg: None,
+                elevation_m: None,
+                distance_m: None,
+                grade_pct: None,
             },
         )?;
 

@@ -12,6 +12,7 @@ use crate::protocol::{
     BridgeCommand, BridgeEvent, FlattenedStep, RideUploadSummary, TelemetrySample, UploadStatus,
     WorkoutExecutionState, WorkoutStepMode,
 };
+use crate::route::{SyntheticRoute, SyntheticRoutePosition};
 use crate::storage::sqlite::SqliteStore;
 use crate::transport::TrainerTransport;
 
@@ -64,6 +65,7 @@ pub struct WorkoutEngine {
     erg_guard: ErgGuard,
     samples: Vec<TelemetrySample>,
     watts_window_3s: VecDeque<u16>,
+    synthetic_route: SyntheticRoute,
 }
 
 impl WorkoutEngine {
@@ -96,6 +98,7 @@ impl WorkoutEngine {
             erg_guard: ErgGuard::new(),
             samples: Vec::new(),
             watts_window_3s: VecDeque::with_capacity(3),
+            synthetic_route: SyntheticRoute::default(),
         }
     }
 
@@ -124,6 +127,7 @@ impl WorkoutEngine {
         self.last_sent_resistance = None;
         self.erg_guard.reset();
         self.samples.clear();
+        self.synthetic_route.reset();
     }
 
     fn current_step(&self) -> Option<&FlattenedStep> {
@@ -505,6 +509,7 @@ impl WorkoutEngine {
     pub async fn tick_one_second(&mut self) -> BridgeEvent {
         self.transport.advance_simulated_second().await;
         let (raw, sensors) = self.transport.read_sample().await;
+        let mut route_position: Option<SyntheticRoutePosition> = None;
 
         if let Some(w) = raw.watts {
             if self.watts_window_3s.len() == 3 {
@@ -555,15 +560,24 @@ impl WorkoutEngine {
                 .await;
 
             if self.state == WorkoutExecutionState::Running {
+                let effective_watts = target_watts.or(raw.watts);
+                let position = self.synthetic_route.advance_one_second(effective_watts);
+                route_position = Some(position);
                 let sample = TelemetrySample {
                     t_s: self.elapsed_s,
                     watts: raw.watts,
                     hr_bpm: raw.hr_bpm,
                     cadence_rpm: raw.cadence_rpm,
-                    speed_kph: raw.speed_kph,
+                    speed_kph: Some(position.speed_kph),
                     target_watts,
                     step_index: Some(self.step_index),
                     erg_bias_pct: Some(self.erg_bias_pct),
+                    synthetic_route: true,
+                    lat_deg: Some(position.lat_deg),
+                    lon_deg: Some(position.lon_deg),
+                    elevation_m: Some(position.elevation_m),
+                    distance_m: Some(position.distance_m),
+                    grade_pct: Some(position.grade_pct),
                 };
                 if let Some(uuid) = &self.ride_uuid
                     && let Err(err) = self.store.append_sample(uuid, &sample)
@@ -621,7 +635,13 @@ impl WorkoutEngine {
             watts_3s,
             cadence_rpm: raw.cadence_rpm,
             hr_bpm: raw.hr_bpm,
-            speed_kph: raw.speed_kph,
+            speed_kph: route_position.map_or(raw.speed_kph, |position| Some(position.speed_kph)),
+            synthetic_route: route_position.is_some(),
+            lat_deg: route_position.map(|position| position.lat_deg),
+            lon_deg: route_position.map(|position| position.lon_deg),
+            elevation_m: route_position.map(|position| position.elevation_m),
+            distance_m: route_position.map(|position| position.distance_m),
+            grade_pct: route_position.map(|position| position.grade_pct),
             text_cue: cur_step.and_then(|s| s.text_cue.clone()),
             sensors,
             pending_uploads,
@@ -695,7 +715,26 @@ mod tests {
 
         // Run 5 normal seconds
         for _ in 0..5 {
-            engine.tick_one_second().await;
+            let event = engine.tick_one_second().await;
+            if let BridgeEvent::Telemetry {
+                synthetic_route,
+                lat_deg,
+                lon_deg,
+                elevation_m,
+                distance_m,
+                grade_pct,
+                ..
+            } = event
+            {
+                assert!(synthetic_route);
+                assert!(lat_deg.is_some());
+                assert!(lon_deg.is_some());
+                assert!(elevation_m.is_some());
+                assert!(distance_m.is_some());
+                assert!(grade_pct.is_some());
+            } else {
+                panic!("expected synthetic route telemetry");
+            }
         }
         assert_eq!(engine.elapsed_s(), 5);
 

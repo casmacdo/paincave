@@ -85,6 +85,12 @@ export const BridgeEventSchema = z.discriminatedUnion("type", [
     cadence_rpm: z.number().int().nullable(),
     hr_bpm: z.number().int().nullable(),
     speed_kph: z.number().nullable(),
+    synthetic_route: z.boolean().optional(),
+    lat_deg: z.number().nullable().optional(),
+    lon_deg: z.number().nullable().optional(),
+    elevation_m: z.number().nullable().optional(),
+    distance_m: z.number().nullable().optional(),
+    grade_pct: z.number().nullable().optional(),
     text_cue: z.string().nullable(),
     sensors: z.object({
       trainer: SensorConnectionStateSchema,
