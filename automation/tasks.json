@@ -398,7 +398,7 @@
       "id": "M6-01",
       "milestone": "M6",
       "title": "Implement Rust BleTransport (btleplug + ftms) for KICKR v5 FTMS & Polar H10 HR plus probe-ble CLI diagnostic",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M4-03"
       ],
@@ -412,13 +412,15 @@
         "Provides trainer-bridge probe-ble CLI subcommand for 10s Linux BlueZ hardware verification",
         "Unit tests cover binary GATT packet parsing for Indoor Bike Data, HR Measurement (8-bit and 16-bit flags), and FTMS Control Point responses"
       ],
-      "verify_cmd": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test"
+      "verify_cmd": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
+      "notes": "Pure-Rust BlueZ zbus + ftms BleTransport, FTMS/HR binary codecs, and probe-ble CLI verified",
+      "updated_at": "2026-11-26T19:58:12.839Z"
     },
     {
       "id": "M6-02",
       "milestone": "M6",
       "title": "Implement outbound Strava OAuth connect/refresh and background .fit upload via ctx.waitUntil",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M2-04"
       ],
@@ -432,7 +434,9 @@
         "Automatically refreshes expired OAuth tokens and uploads indoor .fit files via POST /api/v3/uploads inside ctx.waitUntil without blocking ride save response",
         "Vitest tests mock Strava OAuth token exchange, token refresh, and multipart .fit upload verifying exact request payloads and D1 status updates"
       ],
-      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test",
+      "notes": "Outbound Strava OAuth CSRF flow, token refresh, waitUntil FIT upload, retry endpoint, and Miniflare tests verified",
+      "updated_at": "2026-11-26T20:01:54.491Z"
     },
     {
       "id": "M7-01",

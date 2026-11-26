@@ -4,6 +4,7 @@ import { RideUploadSummarySchema } from "@paincave/shared";
 import type { HonoAppContext } from "../types.js";
 import { requireBridgeOrUiAuth, requireUiAuth } from "../lib/auth.js";
 import { ingestRide, type RideRow } from "../lib/rides-service.js";
+import { uploadFitToStrava } from "../lib/strava-client.js";
 
 const PatchRideSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
@@ -68,6 +69,15 @@ export function createRideRoutes(): Hono<HonoAppContext> {
       summary: parsed.data,
       fitBytes,
     });
+
+    if (!res.idempotent && res.strava_upload_status === "pending") {
+      try {
+        c.executionCtx.waitUntil(uploadFitToStrava(c.env, res.ride_uuid));
+      } catch {
+        // Direct app.fetch() without ExecutionContext in unit tests
+        await uploadFitToStrava(c.env, res.ride_uuid);
+      }
+    }
 
     return c.json(res, res.idempotent ? 200 : 201);
   });

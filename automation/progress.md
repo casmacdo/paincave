@@ -55,3 +55,9 @@ This file is an append-only handoff log maintained by `scripts/update-task.mjs` 
 
 ## 2026-11-26 19:52 UTC — M5-03 (`pending` -> `done`)
 - Calendar, Workouts, Analytics, Settings pages and /api/version auto-update poller verified
+
+## 2026-11-26 19:58 UTC — M6-01 (`pending` -> `done`)
+- Pure-Rust BlueZ zbus + ftms BleTransport, FTMS/HR binary codecs, and probe-ble CLI verified
+
+## 2026-11-26 20:01 UTC — M6-02 (`pending` -> `done`)
+- Outbound Strava OAuth CSRF flow, token refresh, waitUntil FIT upload, retry endpoint, and Miniflare tests verified

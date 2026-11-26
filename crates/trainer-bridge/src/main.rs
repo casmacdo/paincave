@@ -6,6 +6,8 @@ use tracing_subscriber::EnvFilter;
 
 use paincave_bridge::start_bridge_service;
 use paincave_bridge::storage::sqlite::SqliteStore;
+use paincave_bridge::transport::TrainerTransport;
+use paincave_bridge::transport::ble::{BleTransport, probe_ble_devices};
 use paincave_bridge::transport::mock::MockTransport;
 use paincave_bridge::uploader::UploaderConfig;
 
@@ -72,12 +74,11 @@ async fn main() -> anyhow::Result<()> {
             data_dir,
             allowed_origin,
         } => {
-            if !mock {
-                tracing::warn!(
-                    "BleTransport will be activated in M6-01; falling back to MockTransport if BLE is unavailable"
-                );
-            }
-            let transport = Arc::new(MockTransport::new());
+            let transport: Arc<dyn TrainerTransport> = if mock {
+                Arc::new(MockTransport::new())
+            } else {
+                Arc::new(BleTransport::new())
+            };
             let db_path = data_dir.join("bridge.db");
             let store = SqliteStore::open(&db_path)?;
             let uploader_cfg = UploaderConfig {
@@ -102,7 +103,35 @@ async fn main() -> anyhow::Result<()> {
             let _ = handle.shutdown_tx.send(());
         }
         Commands::ProbeBle { seconds } => {
-            println!("BLE hardware probe ({seconds}s) is implemented in M6-01.");
+            tracing::info!(
+                seconds,
+                "Scanning BlueZ adapters for FTMS trainers & BLE HR straps"
+            );
+            match probe_ble_devices(seconds).await {
+                Ok(devices) if devices.is_empty() => {
+                    println!(
+                        "No FTMS (0x1826) or Heart Rate (0x180D) BLE devices found after {seconds}s."
+                    );
+                }
+                Ok(devices) => {
+                    println!("Discovered BLE cycling devices ({}):", devices.len());
+                    for dev in devices {
+                        let roles = match (dev.is_ftms, dev.is_hr) {
+                            (true, true) => "FTMS+HR",
+                            (true, false) => "FTMS",
+                            (false, true) => "HR",
+                            (false, false) => "OTHER",
+                        };
+                        println!(
+                            "  - {} [{}] role={} connected={}",
+                            dev.name, dev.address, roles, dev.connected
+                        );
+                    }
+                }
+                Err(err) => {
+                    println!("BLE probe unavailable on this host: {err}");
+                }
+            }
         }
     }
     Ok(())
