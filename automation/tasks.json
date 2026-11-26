@@ -26,7 +26,7 @@
         "apps/worker/wrangler.jsonc"
       ],
       "acceptance_criteria": [
-        "Standalone git repo initialized at /home/cassidy/Projects/paincave",
+        "Standalone git repo initialized",
         "All docs, D1 migration SQL, wrangler.jsonc, and Cargo/npm workspace skeletons exist",
         "scripts/next-task.mjs validates DAG with zero cycles and scripts/verify.sh passes"
       ],

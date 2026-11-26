@@ -5,7 +5,7 @@ Machine-readable source of truth: [automation/tasks.json](../automation/tasks.js
 ---
 
 ## Milestone M0 — Foundation, Specs & Autonomous Loop Systems ✅ (Current Bootstrap)
-- Standalone monorepo initialized at `/home/cassidy/Projects/paincave` (npm workspaces + Cargo workspace).
+- Standalone monorepo initialized (npm workspaces + Cargo workspace).
 - Architecture, Data Model, MCP Spec, and Loop Architecture written.
 - Executable task DAG (`automation/tasks.json`), task navigator (`scripts/next-task.mjs`), verified task state updater (`scripts/update-task.mjs`), master verification gate (`scripts/verify.sh`), outer Ralph-style autonomous loop (`scripts/autonomous-loop.sh`), and vertical E2E simulation harness (`scripts/sim-e2e.sh`).
 - Initial D1 SQL migration (`apps/worker/migrations/0001_initial.sql`) and `wrangler.jsonc` configured.

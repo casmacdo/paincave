@@ -33,6 +33,12 @@ PainCave is a single-user indoor/outdoor cycling training system built for a **L
    - Historical rides snapshot `ftp_snapshot` / `lthr_snapshot` from `athlete_thresholds` effective on the ride date.
    - Strava is an **outbound sink only** (upload `.fit` via `POST /api/v3/uploads`); never depend on Strava API streams as source-of-truth for LLM analysis.
 
+6. **Public Repository Security Rules (Repo Is Public)**
+   - NEVER commit personal usernames, home directory paths (`/home/<user>`, `/Users/<user>`), email addresses, real athlete ride data, or local timezone/location guesses.
+   - NEVER commit real Cloudflare account IDs, real D1 database IDs, `wrangler.local.jsonc`, `.dev.vars`, `secrets.json`, `bridge.env`, or any real API keys/tokens.
+   - Worker auth MUST fail closed (503) if auth secrets are unset—never fall back to default secrets.
+   - `scripts/verify.sh` enforces a strict tracked-file secret & PII scan on every verification pass.
+
 ## Autonomous Workflow Protocol
 
 When working autonomously on this repository:

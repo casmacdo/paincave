@@ -12,6 +12,7 @@ target/
 .wrangler/
 .dev.vars
 .dev.vars.*
+wrangler.local.jsonc
 worker-configuration.d.ts
 
 # Secrets & environment
@@ -19,6 +20,10 @@ worker-configuration.d.ts
 .env.*
 !.env.example
 secrets.json
+bridge.env
+*.pem
+*.key
+*.p12
 
 # Local runtime state & logs
 *.db

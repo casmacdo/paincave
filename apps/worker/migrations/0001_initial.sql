@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS athlete_profile (
 );
 
 INSERT OR IGNORE INTO athlete_profile (id, display_name, timezone, units)
-VALUES (1, 'Athlete', 'America/Toronto', 'metric');
+VALUES (1, 'Athlete', 'UTC', 'metric');
 
 -- 2. Dated athlete threshold history (never retroactively corrupts past TSS/IF/CTL)
 CREATE TABLE IF NOT EXISTS athlete_thresholds (
