@@ -61,3 +61,9 @@ This file is an append-only handoff log maintained by `scripts/update-task.mjs` 
 
 ## 2026-11-26 20:01 UTC — M6-02 (`pending` -> `done`)
 - Outbound Strava OAuth CSRF flow, token refresh, waitUntil FIT upload, retry endpoint, and Miniflare tests verified
+
+## 2026-11-26 20:08 UTC — M7-01 (`pending` -> `done`)
+- Full vertical E2E simulation (Wrangler local D1/R2 + Rust mock bridge 60x + WS fault + FIT round-trip + MCP read/write) passed
+
+## 2026-11-26 20:11 UTC — M7-02 (`pending` -> `done`)
+- Deployment runbook written; release Rust build, web build, wrangler deploy --dry-run, and strict hygiene/verify passed

@@ -2,23 +2,13 @@
 set -euo pipefail
 
 # Vertical E2E Simulation Loop (Loop 2)
-# Implemented fully in task M7-01 once Worker (M2/M3) and Rust trainer-bridge (M4) are complete.
-#
-# Flow:
-#   1. Apply D1 migrations locally and launch `wrangler dev --local` on port 8787
-#   2. Build and launch `trainer-bridge serve --mock --time-scale 60` on port 8765
-#   3. Run scripts/sim-e2e-driver.mjs:
-#        - MCP create_workout + schedule_workout
-#        - WS load_workout + start
-#        - Inject 5s cadence=0 fault (verify ERG spiral-of-death auto-pause & ramp recovery)
-#        - Finish workout, simulate transient 503 on first upload, verify idempotent retry succeeds
-#        - Assert R2 .fit file, D1 rides/ride_intervals/ride_peaks/daily_pmc, and MCP get_ride_detail
+# Exercises Cloudflare Worker (local D1 + R2) <-> Rust trainer-bridge (60x mock) <-> MCP & WebSocket.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 if [[ ! -f scripts/sim-e2e-driver.mjs ]]; then
-  echo "sim-e2e.sh is scaffolded for M7-01. Complete milestones M1–M4 first (scripts/sim-e2e-driver.mjs not yet implemented)." >&2
+  echo "Missing scripts/sim-e2e-driver.mjs" >&2
   exit 1
 fi
 
@@ -27,28 +17,92 @@ BRIDGE_PID=""
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {
+  local exit_code=$?
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "=== E2E FAILED (exit $exit_code) ===" >&2
+    if [[ -f "$TMP_DIR/worker.log" ]]; then
+      echo "--- worker.log tail ---" >&2
+      tail -n 60 "$TMP_DIR/worker.log" >&2 || true
+    fi
+    if [[ -f "$TMP_DIR/bridge.log" ]]; then
+      echo "--- bridge.log tail ---" >&2
+      tail -n 60 "$TMP_DIR/bridge.log" >&2 || true
+    fi
+  fi
   [[ -n "$BRIDGE_PID" ]] && kill "$BRIDGE_PID" 2>/dev/null || true
-  [[ -n "$WORKER_PID" ]] && kill "$WORKER_PID" 2>/dev/null || true
+  if [[ -n "$WORKER_PID" ]]; then
+    pkill -TERM -P "$WORKER_PID" 2>/dev/null || true
+    kill "$WORKER_PID" 2>/dev/null || true
+  fi
+  wait "$BRIDGE_PID" 2>/dev/null || true
+  wait "$WORKER_PID" 2>/dev/null || true
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
 
-echo "==> [sim-e2e] Building trainer-bridge"
+wait_for_http() {
+  local url="$1"
+  local label="$2"
+  local max_tries="$3"
+  for ((i = 1; i <= max_tries; i++)); do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "Timed out waiting for $label at $url" >&2
+  return 1
+}
+
+echo "==> [sim-e2e] Building @paincave/web assets and Rust trainer-bridge"
+npm --workspace @paincave/web run build >/dev/null
 cargo build --manifest-path crates/trainer-bridge/Cargo.toml
 
+E2E_UI_PASSWORD="sim-e2e-pw-$(openssl rand -hex 6)"
+E2E_UI_PASSWORD_HASH="$(node -e '
+const crypto = require("node:crypto");
+const saltHex = "000102030405060708090a0b0c0d0e0f";
+const derived = crypto.pbkdf2Sync(process.argv[1], Buffer.from(saltHex, "hex"), 100000, 32, "sha256").toString("hex");
+process.stdout.write(`pbkdf2_sha256$100000$${saltHex}$${derived}`);
+' "$E2E_UI_PASSWORD")"
+E2E_SESSION_SECRET="$(openssl rand -hex 24)"
+E2E_BRIDGE_TOKEN="$(openssl rand -hex 24)"
+E2E_MCP_TOKEN="$(openssl rand -hex 24)"
+
 echo "==> [sim-e2e] Applying local D1 migrations & starting Cloudflare Worker"
-npx --workspace @paincave/worker wrangler d1 migrations apply paincave-db --local
-npx --workspace @paincave/worker wrangler dev --local --port 8787 --persist-to "$TMP_DIR/wrangler-state" >"$TMP_DIR/worker.log" 2>&1 &
+(
+  cd apps/worker
+  CI=1 npx wrangler d1 migrations apply paincave-db --local --persist-to "$TMP_DIR/wrangler-state" </dev/null >/dev/null
+)
+
+(
+  cd apps/worker
+  exec env CI=1 npx wrangler dev --local --ip 127.0.0.1 --port 8787 \
+    --persist-to "$TMP_DIR/wrangler-state" \
+    --var "UI_ADMIN_PASSWORD_HASH:$E2E_UI_PASSWORD_HASH" \
+    --var "SESSION_SIGNING_SECRET:$E2E_SESSION_SECRET" \
+    --var "BRIDGE_DEVICE_TOKEN:$E2E_BRIDGE_TOKEN" \
+    --var "MCP_BEARER_TOKEN:$E2E_MCP_TOKEN" \
+    </dev/null
+) >"$TMP_DIR/worker.log" 2>&1 &
 WORKER_PID=$!
+
+wait_for_http "http://127.0.0.1:8787/api/health" "Cloudflare Worker" 60
 
 echo "==> [sim-e2e] Starting trainer-bridge in accelerated mock mode (60x)"
 PAINCAVE_API_URL="http://127.0.0.1:8787" \
 PAINCAVE_BRIDGE_PORT="8765" \
-PAINCAVE_BRIDGE_TOKEN="sim-e2e-bridge-token" \
+PAINCAVE_BRIDGE_TOKEN="$E2E_BRIDGE_TOKEN" \
 PAINCAVE_DATA_DIR="$TMP_DIR/bridge-data" \
   ./target/debug/trainer-bridge serve --mock --time-scale 60 >"$TMP_DIR/bridge.log" 2>&1 &
 BRIDGE_PID=$!
 
+wait_for_http "http://127.0.0.1:8765/health" "Rust trainer-bridge" 30
+
 echo "==> [sim-e2e] Running E2E simulation driver"
-node scripts/sim-e2e-driver.mjs --worker-url http://127.0.0.1:8787 --bridge-url http://127.0.0.1:8765
+E2E_UI_PASSWORD="$E2E_UI_PASSWORD" \
+E2E_BRIDGE_TOKEN="$E2E_BRIDGE_TOKEN" \
+E2E_MCP_TOKEN="$E2E_MCP_TOKEN" \
+  node scripts/sim-e2e-driver.mjs --worker-url http://127.0.0.1:8787 --bridge-url http://127.0.0.1:8765
+
 echo "==> [sim-e2e] Vertical E2E simulation PASSED"

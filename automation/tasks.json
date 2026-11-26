@@ -442,7 +442,7 @@
       "id": "M7-01",
       "milestone": "M7",
       "title": "Complete and pass full vertical simulation E2E loop (scripts/sim-e2e.sh): MCP -> Mock Bridge -> ERG Guard -> Retry Upload -> R2/D1 -> MCP Readback",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M3-02",
         "M4-03",
@@ -460,13 +460,15 @@
         "Drives full accelerated workout over ws://127.0.0.1:8765/ws including injected cadence=0 ERG spiral-of-death recovery and simulated upload retry",
         "Asserts valid .fit stored in R2, exact D1 rides/ride_intervals/ride_peaks/daily_pmc rows, and clean MCP get_ride_detail & get_fitness_overview readback"
       ],
-      "verify_cmd": "./scripts/sim-e2e.sh && ./scripts/verify.sh --strict"
+      "verify_cmd": "./scripts/sim-e2e.sh && ./scripts/verify.sh --strict",
+      "notes": "Full vertical E2E simulation (Wrangler local D1/R2 + Rust mock bridge 60x + WS fault + FIT round-trip + MCP read/write) passed",
+      "updated_at": "2026-11-26T20:08:51.280Z"
     },
     {
       "id": "M7-02",
       "milestone": "M7",
       "title": "Finalize basement Linux deployment automation (systemd unit, deploy-basement.sh, Cloudflare production deploy runbook) and HIL checklist",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M7-01"
       ],
@@ -480,7 +482,9 @@
         "wrangler deploy --dry-run succeeds with apps/web/dist built and bundled",
         "docs/DEPLOYMENT.md provides step-by-step Cloudflare resource creation, Strava API setup, MCP client connection, and basement Linux BLE probe/systemd setup"
       ],
-      "verify_cmd": "cargo build --release && npm run build && ./scripts/verify.sh --strict"
+      "verify_cmd": "cargo build --release && npm run build && ./scripts/verify.sh --strict",
+      "notes": "Deployment runbook written; release Rust build, web build, wrangler deploy --dry-run, and strict hygiene/verify passed",
+      "updated_at": "2026-11-26T20:11:51.250Z"
     }
   ]
 }
