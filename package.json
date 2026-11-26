@@ -14,9 +14,17 @@
     "typecheck": "npm run --workspaces --if-present typecheck",
     "test": "npm run --workspaces --if-present test",
     "build": "npm run --workspaces --if-present build",
-    "lint": "npm run --workspaces --if-present lint",
+    "lint": "eslint packages/shared/src apps/worker/src apps/worker/test apps/web/src",
     "verify": "./scripts/verify.sh",
     "task:next": "node scripts/next-task.mjs",
     "task:all": "node scripts/next-task.mjs --all"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.25.0",
+    "eslint": "^9.25.0",
+    "globals": "^16.0.0",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.30.0",
+    "vitest": "^5.1.2"
   }
 }
