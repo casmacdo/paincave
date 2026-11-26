@@ -209,7 +209,7 @@
       "id": "M3-01",
       "milestone": "M3",
       "title": "Implement Stateless Streamable HTTP MCP Server (/mcp) with all coaching Read tools",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M2-04"
       ],
@@ -223,13 +223,15 @@
         "Implements get_athlete_context, get_fitness_overview, list_recent_rides, get_ride_detail, get_ride_timeseries, get_calendar, list_workouts, get_workout",
         "Integration tests verify full MCP JSON-RPC tool discovery and invocations against Miniflare D1/R2"
       ],
-      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test",
+      "notes": "Implemented stateless Streamable HTTP MCP server (/mcp) with 8 coaching read tools including R2 FIT timeseries decode.",
+      "updated_at": "2026-11-26T19:33:07.704Z"
     },
     {
       "id": "M3-02",
       "milestone": "M3",
       "title": "Implement MCP Write tools with physiological guardrails, deterministic TSS/TSB preview, and OAuth 2.1 metadata/support",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M3-01"
       ],
@@ -243,7 +245,9 @@
         "Write tools enforce hard physiological guardrails, support dry_run, and return deterministic predicted TSS/IF/TSB impact + constraint warnings",
         "Integration tests verify guardrail rejections, dry_run non-mutation, and OAuth/Bearer auth enforcement"
       ],
-      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test",
+      "notes": "Implemented 8 guarded MCP write tools, deterministic TSS/TSB previews, and Mobile OAuth 2.1 + PKCE + DCR.",
+      "updated_at": "2026-11-26T19:33:15.458Z"
     },
     {
       "id": "M4-01",

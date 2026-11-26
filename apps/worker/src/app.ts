@@ -7,6 +7,8 @@ import { createWorkoutRoutes } from "./routes/workouts.js";
 import { createCalendarRoutes } from "./routes/calendar.js";
 import { createRideRoutes } from "./routes/rides.js";
 import { createFitnessRoutes } from "./routes/fitness.js";
+import { createMcpRoutes } from "./mcp/server.js";
+import { createMcpOAuthRoutes } from "./mcp/oauth.js";
 
 export function createApp(): Hono<HonoAppContext> {
   const app = new Hono<HonoAppContext>();
@@ -59,6 +61,8 @@ export function createApp(): Hono<HonoAppContext> {
   app.route("/api/calendar", createCalendarRoutes());
   app.route("/api/rides", createRideRoutes());
   app.route("/api/fitness", createFitnessRoutes());
+  app.route("/mcp", createMcpRoutes());
+  app.route("/", createMcpOAuthRoutes());
 
   // Fallback to Static Assets (SPA) for non-API routes
   app.all("*", async (c) => {

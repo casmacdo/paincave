@@ -31,3 +31,9 @@ This file is an append-only handoff log maintained by `scripts/update-task.mjs` 
 
 ## 2026-11-26 19:27 UTC — M2-04 (`pending` -> `done`)
 - Implemented idempotent ride_uuid ingestion, R2 FIT upload, incremental daily_pmc, and fitness overview.
+
+## 2026-11-26 19:33 UTC — M3-01 (`pending` -> `done`)
+- Implemented stateless Streamable HTTP MCP server (/mcp) with 8 coaching read tools including R2 FIT timeseries decode.
+
+## 2026-11-26 19:33 UTC — M3-02 (`pending` -> `done`)
+- Implemented 8 guarded MCP write tools, deterministic TSS/TSB previews, and Mobile OAuth 2.1 + PKCE + DCR.
