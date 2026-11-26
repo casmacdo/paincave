@@ -37,3 +37,12 @@ This file is an append-only handoff log maintained by `scripts/update-task.mjs` 
 
 ## 2026-11-26 19:33 UTC — M3-02 (`pending` -> `done`)
 - Implemented 8 guarded MCP write tools, deterministic TSS/TSB previews, and Mobile OAuth 2.1 + PKCE + DCR.
+
+## 2026-11-26 19:44 UTC — M4-01 (`pending` -> `done`)
+- Implemented TrainerTransport trait, MockTransport with fault injection, ErgGuard, and 1Hz WorkoutEngine.
+
+## 2026-11-26 19:44 UTC — M4-02 (`pending` -> `done`)
+- Implemented SQLite WAL crash recovery, pure-Rust FIT v2.0 encoder (verified with fitparser), and Rust physiology matching golden-ride.json.
+
+## 2026-11-26 19:44 UTC — M4-03 (`pending` -> `done`)
+- Implemented axum /health & Origin-checked /ws server and retryable idempotent Cloudflare uploader.

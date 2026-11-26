@@ -253,7 +253,7 @@
       "id": "M4-01",
       "milestone": "M4",
       "title": "Build Rust trainer-bridge core: TrainerTransport trait, MockTransport with fault injection, and 1Hz Workout Engine with ERG spiral-of-death guard",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M1-03"
       ],
@@ -271,13 +271,15 @@
         "Workout engine runs monotonic 1Hz state machine (Idle/Armed/Running/Paused/AutoPaused/Completed) with ERG bias, skip/prev, and 3s cadence-zero auto-pause + 3s recovery ramp",
         "cargo test and cargo clippy --all-targets -- -D warnings pass with zero warnings"
       ],
-      "verify_cmd": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test"
+      "verify_cmd": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
+      "notes": "Implemented TrainerTransport trait, MockTransport with fault injection, ErgGuard, and 1Hz WorkoutEngine.",
+      "updated_at": "2026-11-26T19:44:03.679Z"
     },
     {
       "id": "M4-02",
       "milestone": "M4",
       "title": "Implement Rust crash-safe SQLite WAL recorder, rustyfit FIT v2.0 encoder, and Rust physiology calculator matching golden-ride.json",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M4-01"
       ],
@@ -292,13 +294,15 @@
         "rustyfit encoder generates valid FIT v2.0 cycling activity files (file_id, event, record, lap, session, activity) verified by round-trip FIT decode test",
         "Rust physiology engine matches packages/shared/fixtures/golden-ride.json outputs within strict tolerance (NP/IF/TSS/VI/EF/Pw:HR/MMP/intervals/quality flags)"
       ],
-      "verify_cmd": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test"
+      "verify_cmd": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
+      "notes": "Implemented SQLite WAL crash recovery, pure-Rust FIT v2.0 encoder (verified with fitparser), and Rust physiology matching golden-ride.json.",
+      "updated_at": "2026-11-26T19:44:10.061Z"
     },
     {
       "id": "M4-03",
       "milestone": "M4",
       "title": "Implement Rust axum HTTP/WebSocket server (/health, /ws) and retryable idempotent Cloudflare uploader",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M4-02"
       ],
@@ -313,7 +317,9 @@
         "Uploader persists pending uploads in SQLite, sends multipart .fit + summary JSON with X-Bridge-Token and ride_uuid, and retries with exponential backoff on 5xx/network errors",
         "Integration tests verify WebSocket workout control and upload retry recovery against a mock HTTP server"
       ],
-      "verify_cmd": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test"
+      "verify_cmd": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
+      "notes": "Implemented axum /health & Origin-checked /ws server and retryable idempotent Cloudflare uploader.",
+      "updated_at": "2026-11-26T19:44:16.434Z"
     },
     {
       "id": "M5-01",

@@ -1,18 +1,111 @@
-//! PainCave Linux Trainer Bridge Daemon
-//!
-//! Responsibilities (built across M4 & M6):
-//! - Hardware abstraction via `TrainerTransport` (`MockTransport`, `BleTransport`, optional `AntTransport`)
-//! - Monotonic 1Hz workout execution engine + ERG spiral-of-death guard
-//! - Crash-safe local SQLite WAL recording + FIT v2.0 encoding + idempotent Cloudflare upload
-//! - Local HTTP `/health` and WebSocket `/ws` server on `127.0.0.1:8765`
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use clap::{Parser, Subcommand};
+use tracing_subscriber::EnvFilter;
+
+use paincave_bridge::start_bridge_service;
+use paincave_bridge::storage::sqlite::SqliteStore;
+use paincave_bridge::transport::mock::MockTransport;
+use paincave_bridge::uploader::UploaderConfig;
 
 pub const DEFAULT_BRIDGE_PORT: u16 = 8765;
 
-fn main() {
-    println!(
-        "paincave trainer-bridge v{} (bootstrap skeleton; implement M4-01 next)",
-        env!("CARGO_PKG_VERSION")
-    );
+#[derive(Parser, Debug)]
+#[command(
+    name = "trainer-bridge",
+    version,
+    about = "PainCave Linux hardware bridge daemon"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Start the HTTP/WebSocket daemon & 1Hz workout controller on 127.0.0.1
+    Serve {
+        /// Use simulated MockTransport instead of Bluetooth LE
+        #[arg(long, env = "PAINCAVE_MOCK_TRANSPORT", default_value_t = false)]
+        mock: bool,
+        /// Simulation clock speedup multiplier (e.g. 60 = 60 simulated seconds/sec)
+        #[arg(long, default_value_t = 1)]
+        time_scale: u32,
+        /// Port to bind on 127.0.0.1
+        #[arg(long, env = "PAINCAVE_BRIDGE_PORT", default_value_t = DEFAULT_BRIDGE_PORT)]
+        port: u16,
+        /// Cloudflare Worker API base URL
+        #[arg(long, env = "PAINCAVE_API_URL", default_value = "")]
+        api_url: String,
+        /// Device token sent in X-Bridge-Token when uploading finished rides
+        #[arg(long, env = "PAINCAVE_BRIDGE_TOKEN", default_value = "")]
+        bridge_token: String,
+        /// Local data directory for SQLite WAL ride log & upload queue
+        #[arg(long, env = "PAINCAVE_DATA_DIR", default_value = "./.paincave-local")]
+        data_dir: PathBuf,
+        /// Optional comma-separated extra allowed WebSocket origins (e.g. Cloudflare Worker URL)
+        #[arg(long, env = "PAINCAVE_ALLOWED_ORIGIN")]
+        allowed_origin: Option<String>,
+    },
+    /// Scan nearby BLE devices for KICKR v5 (FTMS 0x1826) & Polar H10 (HR 0x180D)
+    ProbeBle {
+        #[arg(long, default_value_t = 10)]
+        seconds: u64,
+    },
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .init();
+
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::Serve {
+            mock,
+            time_scale,
+            port,
+            api_url,
+            bridge_token,
+            data_dir,
+            allowed_origin,
+        } => {
+            if !mock {
+                tracing::warn!(
+                    "BleTransport will be activated in M6-01; falling back to MockTransport if BLE is unavailable"
+                );
+            }
+            let transport = Arc::new(MockTransport::new());
+            let db_path = data_dir.join("bridge.db");
+            let store = SqliteStore::open(&db_path)?;
+            let uploader_cfg = UploaderConfig {
+                api_base_url: api_url,
+                bridge_token,
+                retry_base_seconds: 2,
+            };
+
+            let handle = start_bridge_service(
+                transport,
+                store,
+                uploader_cfg,
+                port,
+                time_scale,
+                allowed_origin,
+            )
+            .await?;
+
+            tracing::info!(addr = %handle.local_addr, mock, time_scale, "PainCave trainer-bridge listening");
+            tokio::signal::ctrl_c().await?;
+            tracing::info!("Shutting down trainer-bridge");
+            let _ = handle.shutdown_tx.send(());
+        }
+        Commands::ProbeBle { seconds } => {
+            println!("BLE hardware probe ({seconds}s) is implemented in M6-01.");
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

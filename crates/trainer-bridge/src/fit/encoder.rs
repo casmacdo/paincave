@@ -1,0 +1,317 @@
+use chrono::{DateTime, Utc};
+
+use crate::physiology::RideMetricsResult;
+use crate::protocol::TelemetrySample;
+
+const FIT_EPOCH_UNIX_S: i64 = 631_065_600;
+
+const CRC_TABLE: [u16; 16] = [
+    0x0000, 0xCC01, 0xD801, 0x1400, 0xF001, 0x3C00, 0x2800, 0xE401, 0xA001, 0x6C00, 0x7800, 0xB401,
+    0x5000, 0x9C01, 0x8801, 0x4400,
+];
+
+fn fit_crc16(bytes: &[u8]) -> u16 {
+    let mut crc: u16 = 0;
+    for &byte in bytes {
+        let mut tmp = CRC_TABLE[usize::from(crc & 0x0F)];
+        crc = (crc >> 4) & 0x0FFF;
+        crc ^= tmp ^ CRC_TABLE[usize::from(byte & 0x0F)];
+
+        tmp = CRC_TABLE[usize::from(crc & 0x0F)];
+        crc = (crc >> 4) & 0x0FFF;
+        crc ^= tmp ^ CRC_TABLE[usize::from((byte >> 4) & 0x0F)];
+    }
+    crc
+}
+
+fn to_fit_timestamp(utc: DateTime<Utc>) -> u32 {
+    (utc.timestamp() - FIT_EPOCH_UNIX_S).max(0) as u32
+}
+
+fn push_def(buf: &mut Vec<u8>, local_id: u8, global_msg: u16, fields: &[(u8, u8, u8)]) {
+    buf.push(0x40 | (local_id & 0x0F));
+    buf.push(0x00); // reserved
+    buf.push(0x00); // little endian
+    buf.extend_from_slice(&global_msg.to_le_bytes());
+    buf.push(fields.len() as u8);
+    for &(field_num, size, base_type) in fields {
+        buf.push(field_num);
+        buf.push(size);
+        buf.push(base_type);
+    }
+}
+
+/// Encodes a standard FIT v2.0 Indoor Cycling Activity file containing
+/// `file_id`, timer `event`s, 1Hz `record`s, `lap`, `session`, and `activity` messages.
+pub fn encode_cycling_fit(
+    started_at: DateTime<Utc>,
+    samples: &[TelemetrySample],
+    metrics: &RideMetricsResult,
+) -> Vec<u8> {
+    let mut data = Vec::with_capacity(256 + samples.len() * 16);
+    let start_fit_ts = to_fit_timestamp(started_at);
+    let end_fit_ts = start_fit_ts.saturating_add(metrics.elapsed_s);
+
+    // 1. file_id (global 0, local 0)
+    push_def(
+        &mut data,
+        0,
+        0,
+        &[
+            (0, 1, 0x00), // type = activity (4)
+            (1, 2, 0x84), // manufacturer = development (255)
+            (2, 2, 0x84), // product = 1
+            (3, 4, 0x8C), // serial_number
+            (4, 4, 0x86), // time_created
+        ],
+    );
+    data.push(0x00);
+    data.push(4);
+    data.extend_from_slice(&255u16.to_le_bytes());
+    data.extend_from_slice(&1u16.to_le_bytes());
+    data.extend_from_slice(&1001u32.to_le_bytes());
+    data.extend_from_slice(&start_fit_ts.to_le_bytes());
+
+    // 2. event definition (global 21, local 1) + timer start
+    push_def(
+        &mut data,
+        1,
+        21,
+        &[
+            (253, 4, 0x86), // timestamp
+            (0, 1, 0x00),   // event = timer (0)
+            (1, 1, 0x00),   // event_type = start (0) / stop_all (4)
+            (4, 1, 0x02),   // event_group = 0
+        ],
+    );
+    data.push(0x01);
+    data.extend_from_slice(&start_fit_ts.to_le_bytes());
+    data.push(0);
+    data.push(0);
+    data.push(0);
+
+    // 3. record definition (global 20, local 2) + 1Hz samples
+    push_def(
+        &mut data,
+        2,
+        20,
+        &[
+            (253, 4, 0x86), // timestamp
+            (3, 1, 0x02),   // heart_rate (bpm)
+            (4, 1, 0x02),   // cadence (rpm)
+            (5, 4, 0x86),   // distance (m * 100)
+            (6, 2, 0x84),   // speed (m/s * 1000)
+            (7, 2, 0x84),   // power (watts)
+        ],
+    );
+
+    let mut cumulative_distance_m = 0.0_f64;
+    let mut max_power: Option<u16> = None;
+
+    for s in samples {
+        let ts = start_fit_ts.saturating_add(s.t_s);
+        let hr = s.hr_bpm.filter(|h| *h > 0).unwrap_or(0xFF);
+        let cad = s.cadence_rpm.unwrap_or(0xFF);
+        let speed_ms = s.speed_kph.map(|k| (k / 3.6).max(0.0));
+        if let Some(ms) = speed_ms {
+            cumulative_distance_m += ms;
+        }
+        let dist_cm = (cumulative_distance_m * 100.0).round() as u32;
+        let speed_mms = speed_ms.map_or(0xFFFF, |ms| (ms * 1000.0).round().min(65534.0) as u16);
+        let power = s.watts.unwrap_or(0xFFFF);
+        if let Some(w) = s.watts {
+            max_power = Some(max_power.map_or(w, |m| m.max(w)));
+        }
+
+        data.push(0x02);
+        data.extend_from_slice(&ts.to_le_bytes());
+        data.push(hr);
+        data.push(cad);
+        data.extend_from_slice(&dist_cm.to_le_bytes());
+        data.extend_from_slice(&speed_mms.to_le_bytes());
+        data.extend_from_slice(&power.to_le_bytes());
+    }
+
+    // Timer stop event
+    data.push(0x01);
+    data.extend_from_slice(&end_fit_ts.to_le_bytes());
+    data.push(0);
+    data.push(4); // stop_all
+    data.push(0);
+
+    let total_elapsed_ms = metrics.elapsed_s.saturating_mul(1000);
+    let total_timer_ms = metrics.duration_s.saturating_mul(1000);
+    let total_dist_cm = (cumulative_distance_m * 100.0).round() as u32;
+    let avg_hr_u8 = metrics.avg_hr.map_or(0xFF, |h| h.min(254) as u8);
+    let max_hr_u8 = metrics.max_hr.map_or(0xFF, |h| h.min(254) as u8);
+    let avg_cad_u8 = metrics.avg_cadence.map_or(0xFF, |c| c.min(254) as u8);
+    let avg_pwr_u16 = metrics.avg_power.unwrap_or(0xFFFF);
+    let max_pwr_u16 = max_power.unwrap_or(0xFFFF);
+    let np_u16 = metrics.np_watts.unwrap_or(0xFFFF);
+    let tss_tenths = (metrics.tss * 10.0).round().clamp(0.0, 65534.0) as u16;
+    let if_thousandths = metrics
+        .intensity_factor
+        .map_or(0xFFFF, |v| (v * 1000.0).round().clamp(0.0, 65534.0) as u16);
+    let total_work_j = (metrics.work_kj * 1000.0).round().max(0.0) as u32;
+
+    // 4. lap (global 19, local 3)
+    push_def(
+        &mut data,
+        3,
+        19,
+        &[
+            (253, 4, 0x86),
+            (2, 4, 0x86),
+            (7, 4, 0x86),
+            (8, 4, 0x86),
+            (9, 4, 0x86),
+            (15, 1, 0x02),
+            (16, 1, 0x02),
+            (17, 1, 0x02),
+            (19, 2, 0x84),
+            (20, 2, 0x84),
+            (25, 1, 0x00),
+            (39, 1, 0x00),
+        ],
+    );
+    data.push(0x03);
+    data.extend_from_slice(&end_fit_ts.to_le_bytes());
+    data.extend_from_slice(&start_fit_ts.to_le_bytes());
+    data.extend_from_slice(&total_elapsed_ms.to_le_bytes());
+    data.extend_from_slice(&total_timer_ms.to_le_bytes());
+    data.extend_from_slice(&total_dist_cm.to_le_bytes());
+    data.push(avg_hr_u8);
+    data.push(max_hr_u8);
+    data.push(avg_cad_u8);
+    data.extend_from_slice(&avg_pwr_u16.to_le_bytes());
+    data.extend_from_slice(&max_pwr_u16.to_le_bytes());
+    data.push(2); // cycling
+    data.push(6); // indoor_cycling
+
+    // 5. session (global 18, local 4)
+    push_def(
+        &mut data,
+        4,
+        18,
+        &[
+            (253, 4, 0x86),
+            (2, 4, 0x86),
+            (5, 1, 0x00),
+            (6, 1, 0x00),
+            (7, 4, 0x86),
+            (8, 4, 0x86),
+            (9, 4, 0x86),
+            (16, 1, 0x02),
+            (17, 1, 0x02),
+            (18, 1, 0x02),
+            (20, 2, 0x84),
+            (21, 2, 0x84),
+            (26, 2, 0x84),
+            (34, 2, 0x84),
+            (35, 2, 0x84),
+            (36, 2, 0x84),
+            (48, 4, 0x86),
+        ],
+    );
+    data.push(0x04);
+    data.extend_from_slice(&end_fit_ts.to_le_bytes());
+    data.extend_from_slice(&start_fit_ts.to_le_bytes());
+    data.push(2);
+    data.push(6);
+    data.extend_from_slice(&total_elapsed_ms.to_le_bytes());
+    data.extend_from_slice(&total_timer_ms.to_le_bytes());
+    data.extend_from_slice(&total_dist_cm.to_le_bytes());
+    data.push(avg_hr_u8);
+    data.push(max_hr_u8);
+    data.push(avg_cad_u8);
+    data.extend_from_slice(&avg_pwr_u16.to_le_bytes());
+    data.extend_from_slice(&max_pwr_u16.to_le_bytes());
+    data.extend_from_slice(&1u16.to_le_bytes());
+    data.extend_from_slice(&np_u16.to_le_bytes());
+    data.extend_from_slice(&tss_tenths.to_le_bytes());
+    data.extend_from_slice(&if_thousandths.to_le_bytes());
+    data.extend_from_slice(&total_work_j.to_le_bytes());
+
+    // 6. activity (global 34, local 5)
+    push_def(
+        &mut data,
+        5,
+        34,
+        &[
+            (253, 4, 0x86),
+            (0, 4, 0x86),
+            (1, 2, 0x84),
+            (2, 1, 0x00),
+            (3, 1, 0x00),
+            (4, 1, 0x00),
+        ],
+    );
+    data.push(0x05);
+    data.extend_from_slice(&end_fit_ts.to_le_bytes());
+    data.extend_from_slice(&total_timer_ms.to_le_bytes());
+    data.extend_from_slice(&1u16.to_le_bytes());
+    data.push(0); // manual
+    data.push(26); // activity
+    data.push(1); // stop
+
+    // Assemble 14-byte FIT v2.0 header + data + trailing 2-byte CRC
+    let data_size = data.len() as u32;
+    let mut header = Vec::with_capacity(14);
+    header.push(14);
+    header.push(0x20); // protocol v2.0
+    header.extend_from_slice(&21126u16.to_le_bytes());
+    header.extend_from_slice(&data_size.to_le_bytes());
+    header.extend_from_slice(b".FIT");
+    let header_crc = fit_crc16(&header);
+    header.extend_from_slice(&header_crc.to_le_bytes());
+
+    let mut out = Vec::with_capacity(14 + data.len() + 2);
+    out.extend_from_slice(&header);
+    out.extend_from_slice(&data);
+    let file_crc = fit_crc16(&out);
+    out.extend_from_slice(&file_crc.to_le_bytes());
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::physiology::compute_ride_metrics;
+
+    #[test]
+    fn round_trip_fit_file_decodes_cleanly_with_fitparser() -> anyhow::Result<()> {
+        let samples: Vec<TelemetrySample> = (0..60)
+            .map(|t| TelemetrySample {
+                t_s: t,
+                watts: Some(220 + ((t % 5) as u16) * 3),
+                hr_bpm: Some(145 + (t % 4) as u8),
+                cadence_rpm: Some(90),
+                speed_kph: Some(32.4),
+                target_watts: Some(225),
+                step_index: Some(0),
+                erg_bias_pct: Some(100),
+            })
+            .collect();
+
+        let metrics = compute_ride_metrics(&samples, 260, Some(172), Some(190), Some(72.0), None);
+        let started = Utc::now();
+        let fit_bytes = encode_cycling_fit(started, &samples, &metrics);
+
+        let parsed = fitparser::from_bytes(&fit_bytes)?;
+        let record_count = parsed
+            .iter()
+            .filter(|m| m.kind() == fitparser::profile::MesgNum::Record)
+            .count();
+        let has_session = parsed
+            .iter()
+            .any(|m| m.kind() == fitparser::profile::MesgNum::Session);
+        let has_activity = parsed
+            .iter()
+            .any(|m| m.kind() == fitparser::profile::MesgNum::Activity);
+
+        assert_eq!(record_count, 60);
+        assert!(has_session);
+        assert!(has_activity);
+        Ok(())
+    }
+}
