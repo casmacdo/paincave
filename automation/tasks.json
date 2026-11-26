@@ -325,7 +325,7 @@
       "id": "M5-01",
       "milestone": "M5",
       "title": "Build React + Vite + Tailwind PWA shell, auth flow, offline Service Worker, idle auto-reload, and Bridge WebSocket client",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M2-04"
       ],
@@ -343,13 +343,15 @@
         "BridgeClient reconnects automatically to ws://127.0.0.1:8765/ws and rehydrates active ride state on refresh",
         "Unit tests cover BridgeClient reconnect and auto-reload gating logic"
       ],
-      "verify_cmd": "npm --workspace @paincave/web run typecheck && npm --workspace @paincave/web run test && npm --workspace @paincave/web run build"
+      "verify_cmd": "npm --workspace @paincave/web run typecheck && npm --workspace @paincave/web run test && npm --workspace @paincave/web run build",
+      "notes": "React/Vite/Tailwind/PWA shell, API client, and bridge WebSocket client verified",
+      "updated_at": "2026-11-26T19:51:49.269Z"
     },
     {
       "id": "M5-02",
       "milestone": "M5",
       "title": "Build Live Workout Player UI with uPlot real-time telemetry graph, interval HUD, coaching cues, ERG controls, and post-ride RPE modal",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M5-01"
       ],
@@ -364,13 +366,15 @@
         "Renders planned workout profile with live scrolling power/HR uPlot overlay",
         "Supports Start, Pause/Resume, Skip/Prev Step, ERG bias +/- 5%, and 10-second post-ride RPE (1-10) / Feel (1-5) / Notes submission"
       ],
-      "verify_cmd": "npm --workspace @paincave/web run typecheck && npm --workspace @paincave/web run test && npm --workspace @paincave/web run build"
+      "verify_cmd": "npm --workspace @paincave/web run typecheck && npm --workspace @paincave/web run test && npm --workspace @paincave/web run build",
+      "notes": "RidePage HUD, uPlot/SVG LiveWorkoutChart, ERG/Slope controls, and PostRideModal verified",
+      "updated_at": "2026-11-26T19:51:55.011Z"
     },
     {
       "id": "M5-03",
       "milestone": "M5",
       "title": "Build Calendar, Workout Library (with preview & Load on Trainer), Analytics (PMC/MMP/Intervals/.fit upload), and Settings views",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M5-02"
       ],
@@ -386,7 +390,9 @@
         "Analytics displays PMC (CTL/ATL/TSB) chart, 42d/90d MMP curve, per-interval compliance table, and manual outdoor .fit upload dropzone",
         "Settings manages thresholds, bridge URL/status, Strava status, and MCP setup info"
       ],
-      "verify_cmd": "npm --workspace @paincave/web run typecheck && npm --workspace @paincave/web run test && npm --workspace @paincave/web run build"
+      "verify_cmd": "npm --workspace @paincave/web run typecheck && npm --workspace @paincave/web run test && npm --workspace @paincave/web run build",
+      "notes": "Calendar, Workouts, Analytics, Settings pages and /api/version auto-update poller verified",
+      "updated_at": "2026-11-26T19:52:01.047Z"
     },
     {
       "id": "M6-01",

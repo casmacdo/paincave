@@ -1,0 +1,9 @@
+{
+  "name": "PainCave",
+  "short_name": "PainCave",
+  "description": "Smart Trainer Player, Analytics & AI Coaching Hub",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#f97316"
+}

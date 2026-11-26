@@ -46,3 +46,12 @@ This file is an append-only handoff log maintained by `scripts/update-task.mjs` 
 
 ## 2026-11-26 19:44 UTC — M4-03 (`pending` -> `done`)
 - Implemented axum /health & Origin-checked /ws server and retryable idempotent Cloudflare uploader.
+
+## 2026-11-26 19:51 UTC — M5-01 (`pending` -> `done`)
+- React/Vite/Tailwind/PWA shell, API client, and bridge WebSocket client verified
+
+## 2026-11-26 19:51 UTC — M5-02 (`pending` -> `done`)
+- RidePage HUD, uPlot/SVG LiveWorkoutChart, ERG/Slope controls, and PostRideModal verified
+
+## 2026-11-26 19:52 UTC — M5-03 (`pending` -> `done`)
+- Calendar, Workouts, Analytics, Settings pages and /api/version auto-update poller verified
