@@ -16,6 +16,11 @@ interface JsonRpcRequest {
 }
 
 const SUPPORTED_PROTOCOL_VERSION = "2025-03-26";
+const SUPPORTED_PROTOCOL_VERSIONS = new Set([
+  "2024-11-05",
+  SUPPORTED_PROTOCOL_VERSION,
+  "2025-06-18",
+]);
 
 export class McpToolRegistry {
   private readonly tools = new Map<string, McpToolDefinition>();
@@ -146,8 +151,11 @@ async function dispatchSingleRpc(
       typeof params.protocolVersion === "string"
         ? params.protocolVersion
         : SUPPORTED_PROTOCOL_VERSION;
+    const negotiatedVersion = SUPPORTED_PROTOCOL_VERSIONS.has(requestedVersion)
+      ? requestedVersion
+      : SUPPORTED_PROTOCOL_VERSION;
     return jsonRpcOk(req.id, {
-      protocolVersion: requestedVersion,
+      protocolVersion: negotiatedVersion,
       capabilities: {
         tools: { listChanged: false },
       },

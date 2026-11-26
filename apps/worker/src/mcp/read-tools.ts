@@ -73,11 +73,11 @@ export function registerReadTools(registry: McpToolRegistry): void {
       description:
         "Returns current CTL/ATL/TSB/7d ramp rate, daily PMC series, weekly hours/TSS/zone rollups, and rolling 42d/90d MMP peak power curves + CP/W' estimate.",
       inputSchema: z.object({
-        days: z.number().int().min(7).max(365).default(42),
+        days: z.coerce.number().int().min(7).max(365).optional(),
       }),
     },
     async ({ days }, env) => {
-      return getFitnessOverview(env.DB, days);
+      return getFitnessOverview(env.DB, days ?? 42);
     }
   );
 

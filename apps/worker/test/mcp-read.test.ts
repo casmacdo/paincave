@@ -75,6 +75,12 @@ describe("Stateless Remote MCP Server — Read Tools", () => {
       serverInfo: { name: string };
     }>("initialize", { protocolVersion: "2025-03-26" });
     expect(init.serverInfo.name).toBe("paincave-mcp");
+    expect(init.protocolVersion).toBe("2025-03-26");
+
+    const newerInit = await mcpRpc<{ protocolVersion: string }>("initialize", {
+      protocolVersion: "2025-06-18",
+    });
+    expect(newerInit.protocolVersion).toBe("2025-06-18");
 
     const list = await mcpRpc<{
       tools: { name: string; inputSchema: Record<string, unknown> }[];
@@ -162,6 +168,13 @@ describe("Stateless Remote MCP Server — Read Tools", () => {
       structuredContent: { current_pmc: { ctl: number } };
     }>("tools/call", { name: "get_fitness_overview", arguments: { days: 42 } });
     expect(fitRes.structuredContent.current_pmc.ctl).toBeGreaterThan(0);
+
+    const fitStringDays = await mcpRpc<{
+      structuredContent: { current_pmc: { ctl: number } };
+      isError: boolean;
+    }>("tools/call", { name: "get_fitness_overview", arguments: { days: "42" } });
+    expect(fitStringDays.isError).toBe(false);
+    expect(fitStringDays.structuredContent.current_pmc.ctl).toBeGreaterThan(0);
 
     const recentRes = await mcpRpc<{
       structuredContent: { rides: { ride_uuid: string }[] };
