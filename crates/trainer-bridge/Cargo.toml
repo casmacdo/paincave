@@ -1,0 +1,14 @@
+[package]
+name = "trainer-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "PainCave Linux hardware daemon owning 1Hz trainer control, crash-safe recording, FIT encoding, and Cloudflare sync"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Core dependencies (tokio, axum, rusqlite, rustyfit, reqwest, serde, btleplug, ftms)
+# are added progressively starting in M4-01 so M0 bootstrap compiles offline cleanly.

@@ -1,0 +1,15 @@
+[Unit]
+Description=PainCave Trainer Bridge (KICKR v5 + Polar H10 daemon)
+After=network-online.target bluetooth.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/paincave/bridge.env
+ExecStart=%h/.local/bin/trainer-bridge serve
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

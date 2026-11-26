@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+target/
+*.tsbuildinfo
+
+# Cloudflare / Wrangler
+.wrangler/
+.dev.vars
+.dev.vars.*
+worker-configuration.d.ts
+
+# Secrets & environment
+.env
+.env.*
+!.env.example
+secrets.json
+
+# Local runtime state & logs
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.fit
+.paincave-logs/
+automation/logs/
+
+# OS & Editors
+.DS_Store
+.idea/
+.vscode/
+*.swp

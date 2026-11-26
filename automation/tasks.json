@@ -1,0 +1,410 @@
+{
+  "schema_version": 1,
+  "project": "paincave",
+  "tasks": [
+    {
+      "id": "M0-01",
+      "milestone": "M0",
+      "title": "Bootstrap standalone monorepo, architecture specs, D1 DDL, and autonomous loop harness",
+      "status": "done",
+      "depends_on": [],
+      "files_expected": [
+        "AGENTS.md",
+        "README.md",
+        "docs/ARCHITECTURE.md",
+        "docs/DATA_MODEL.md",
+        "docs/MCP_SPEC.md",
+        "docs/PLAN.md",
+        "automation/tasks.json",
+        "automation/LOOP_ARCHITECTURE.md",
+        "automation/PROMPT_AUTONOMOUS.md",
+        "scripts/verify.sh",
+        "scripts/next-task.mjs",
+        "scripts/update-task.mjs",
+        "scripts/autonomous-loop.sh",
+        "apps/worker/migrations/0001_initial.sql",
+        "apps/worker/wrangler.jsonc"
+      ],
+      "acceptance_criteria": [
+        "Standalone git repo initialized at /home/cassidy/Projects/paincave",
+        "All docs, D1 migration SQL, wrangler.jsonc, and Cargo/npm workspace skeletons exist",
+        "scripts/next-task.mjs validates DAG with zero cycles and scripts/verify.sh passes"
+      ],
+      "verify_cmd": "node scripts/next-task.mjs --validate && ./scripts/verify.sh",
+      "notes": "Bootstrapped repository, specs, initial D1 migration, Rust/npm workspace skeletons, and autonomous feedback loop harness."
+    },
+    {
+      "id": "M1-01",
+      "milestone": "M1",
+      "title": "Install and wire npm workspace dependencies, Vitest configs, and ESLint no-floating-promises rule",
+      "status": "pending",
+      "depends_on": ["M0-01"],
+      "files_expected": [
+        "package.json",
+        "packages/shared/package.json",
+        "apps/worker/package.json",
+        "apps/web/package.json",
+        "eslint.config.mjs"
+      ],
+      "acceptance_criteria": [
+        "npm install succeeds cleanly across packages/shared, apps/worker, and apps/web",
+        "ESLint enforces @typescript-eslint/no-floating-promises on apps/worker",
+        "npm run typecheck, npm run lint, and npm run test execute cleanly across all workspaces"
+      ],
+      "verify_cmd": "npm run typecheck && npm run lint && npm run test"
+    },
+    {
+      "id": "M1-02",
+      "milestone": "M1",
+      "title": "Implement WorkoutSpec Zod schemas, physiological guardrails, flattenWorkout, load predictor, and ZWO/ERG compilers",
+      "status": "pending",
+      "depends_on": ["M1-01"],
+      "files_expected": [
+        "packages/shared/src/workout/schema.ts",
+        "packages/shared/src/workout/guardrails.ts",
+        "packages/shared/src/workout/flatten.ts",
+        "packages/shared/src/workout/export.ts",
+        "packages/shared/src/workout/__tests__/workout.test.ts"
+      ],
+      "acceptance_criteria": [
+        "WorkoutSpec supports steady, ramp, slope, free_ride, and repeat blocks with optional cadence_rpm and text_cue",
+        "Guardrails reject unsafe workouts (duration <5m or >6h, %FTP outside [0.25, 2.50], sustained >120s over 1.50 FTP, nested repeats)",
+        "flattenWorkout deterministically expands repeats and converts %FTP to integer watts",
+        "predictWorkoutLoad computes deterministic duration, NP, IF, TSS, and zone seconds",
+        "toZwoXml and toErgText emit valid GoldenCheetah-compatible workout files verified by unit tests"
+      ],
+      "verify_cmd": "npm --workspace @paincave/shared run typecheck && npm --workspace @paincave/shared run test"
+    },
+    {
+      "id": "M1-03",
+      "milestone": "M1",
+      "title": "Implement deterministic physiology engine (NP/IF/TSS/VI/EF/Pw:HR/HRR/Zones/O(N) MMP/CP+W'/PMC/Intervals) and golden test fixture",
+      "status": "pending",
+      "depends_on": ["M1-02"],
+      "files_expected": [
+        "packages/shared/src/physiology/metrics.ts",
+        "packages/shared/src/physiology/mmp.ts",
+        "packages/shared/src/physiology/cp.ts",
+        "packages/shared/src/physiology/pmc.ts",
+        "packages/shared/src/physiology/intervals.ts",
+        "packages/shared/src/protocol/bridge.ts",
+        "packages/shared/fixtures/golden-ride.json",
+        "packages/shared/src/physiology/__tests__/physiology.test.ts"
+      ],
+      "acceptance_criteria": [
+        "Implements all 14 formulas in docs/DATA_MODEL.md including O(N) prefix-sum MMP and data quality flags",
+        "Generates packages/shared/fixtures/golden-ride.json with 1Hz telemetry, flattened steps, and exact expected outputs for cross-language Rust parity",
+        "Performance test verifies 14,400-second (4h) ride analytics finishes well under 15ms in Node/V8",
+        "Exports shared WebSocket bridge command/event Zod schemas"
+      ],
+      "verify_cmd": "npm --workspace @paincave/shared run typecheck && npm --workspace @paincave/shared run test"
+    },
+    {
+      "id": "M2-01",
+      "milestone": "M2",
+      "title": "Set up Cloudflare Worker with Hono, wrangler types, structured JSON logging, and Vitest Workers pool harness",
+      "status": "pending",
+      "depends_on": ["M1-03"],
+      "files_expected": [
+        "apps/worker/wrangler.jsonc",
+        "apps/worker/vitest.config.ts",
+        "apps/worker/src/index.ts",
+        "apps/worker/src/lib/logger.ts",
+        "apps/worker/test/health.test.ts"
+      ],
+      "acceptance_criteria": [
+        "wrangler types generates worker-configuration.d.ts with zero hand-written Env interfaces",
+        "GET /api/health and GET /api/version return structured JSON",
+        "@cloudflare/vitest-pool-workers runs real D1 migrations (0001_initial.sql) and R2 bindings in test suite"
+      ],
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+    },
+    {
+      "id": "M2-02",
+      "milestone": "M2",
+      "title": "Implement Worker authentication (Web Crypto sessions, timing-safe device & MCP tokens) and athlete profile/thresholds/blocks/notes API",
+      "status": "pending",
+      "depends_on": ["M2-01"],
+      "files_expected": [
+        "apps/worker/src/lib/auth.ts",
+        "apps/worker/src/routes/auth.ts",
+        "apps/worker/src/routes/athlete.ts",
+        "apps/worker/test/auth-athlete.test.ts"
+      ],
+      "acceptance_criteria": [
+        "Uses crypto.subtle.timingSafeEqual on SHA-256 hashes for all token comparisons",
+        "Supports HttpOnly SameSite=Lax UI session cookies, X-Bridge-Token for trainer-bridge, and Bearer token for MCP",
+        "CRUD endpoints work for athlete_profile, dated athlete_thresholds, training_blocks, and coaching_notes",
+        "Unauthorized requests return 401 cleanly with structured JSON errors"
+      ],
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+    },
+    {
+      "id": "M2-03",
+      "milestone": "M2",
+      "title": "Implement Workouts CRUD, deterministic ZWO/ERG export endpoints, and Calendar planned_sessions API",
+      "status": "pending",
+      "depends_on": ["M2-02"],
+      "files_expected": [
+        "apps/worker/src/routes/workouts.ts",
+        "apps/worker/src/routes/calendar.ts",
+        "apps/worker/test/workouts-calendar.test.ts"
+      ],
+      "acceptance_criteria": [
+        "POST/PUT /api/workouts validates WorkoutSpec with physiological guardrails and stores predicted duration/IF/TSS/zones",
+        "GET /api/workouts/:id/export.zwo and export.erg return valid downloadable files",
+        "Calendar endpoints list date ranges with joined workout details, schedule sessions, and check training_block day constraints"
+      ],
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+    },
+    {
+      "id": "M2-04",
+      "milestone": "M2",
+      "title": "Implement idempotent ride ingestion (R2 .fit + D1 batch + incremental PMC), ride detail/RPE endpoints, and fitness overview API",
+      "status": "pending",
+      "depends_on": ["M2-03"],
+      "files_expected": [
+        "apps/worker/src/routes/rides.ts",
+        "apps/worker/src/routes/fitness.ts",
+        "apps/worker/src/lib/pmc-store.ts",
+        "apps/worker/test/rides-fitness.test.ts"
+      ],
+      "acceptance_criteria": [
+        "POST /api/rides enforces UNIQUE(ride_uuid) idempotency: duplicate upload returns 200 without duplicating D1 rows or R2 objects",
+        "Streams .fit payload to R2 at fits/YYYY/MM/<ride_uuid>.fit and writes rides, ride_intervals, and ride_peaks atomically via DB.batch",
+        "Incrementally recomputes daily_pmc (CTL/ATL/TSB/ramp_rate_7d) from ride date forward and links matching planned_sessions",
+        "GET /api/fitness/overview returns daily PMC, weekly rollups, and rolling 42d/90d MMP + CP/W'"
+      ],
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+    },
+    {
+      "id": "M3-01",
+      "milestone": "M3",
+      "title": "Implement Stateless Streamable HTTP MCP Server (/mcp) with all coaching Read tools",
+      "status": "pending",
+      "depends_on": ["M2-04"],
+      "files_expected": [
+        "apps/worker/src/mcp/server.ts",
+        "apps/worker/src/mcp/read-tools.ts",
+        "apps/worker/test/mcp-read.test.ts"
+      ],
+      "acceptance_criteria": [
+        "Mounts stateless Streamable HTTP MCP transport at /mcp with zero Durable Objects",
+        "Implements get_athlete_context, get_fitness_overview, list_recent_rides, get_ride_detail, get_ride_timeseries, get_calendar, list_workouts, get_workout",
+        "Integration tests verify full MCP JSON-RPC tool discovery and invocations against Miniflare D1/R2"
+      ],
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+    },
+    {
+      "id": "M3-02",
+      "milestone": "M3",
+      "title": "Implement MCP Write tools with physiological guardrails, deterministic TSS/TSB preview, and OAuth 2.1 metadata/support",
+      "status": "pending",
+      "depends_on": ["M3-01"],
+      "files_expected": [
+        "apps/worker/src/mcp/write-tools.ts",
+        "apps/worker/src/mcp/oauth.ts",
+        "apps/worker/test/mcp-write.test.ts"
+      ],
+      "acceptance_criteria": [
+        "Implements create_workout, update_workout, schedule_workout, move_or_cancel_session, upsert_training_block, save_coaching_note, archive_coaching_note, log_threshold_update",
+        "Write tools enforce hard physiological guardrails, support dry_run, and return deterministic predicted TSS/IF/TSB impact + constraint warnings",
+        "Integration tests verify guardrail rejections, dry_run non-mutation, and OAuth/Bearer auth enforcement"
+      ],
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+    },
+    {
+      "id": "M4-01",
+      "milestone": "M4",
+      "title": "Build Rust trainer-bridge core: TrainerTransport trait, MockTransport with fault injection, and 1Hz Workout Engine with ERG spiral-of-death guard",
+      "status": "pending",
+      "depends_on": ["M1-03"],
+      "files_expected": [
+        "crates/trainer-bridge/Cargo.toml",
+        "crates/trainer-bridge/src/transport/mod.rs",
+        "crates/trainer-bridge/src/transport/mock.rs",
+        "crates/trainer-bridge/src/engine/workout.rs",
+        "crates/trainer-bridge/src/engine/erg_guard.rs",
+        "crates/trainer-bridge/src/protocol.rs"
+      ],
+      "acceptance_criteria": [
+        "TrainerTransport trait cleanly abstracts telemetry stream, ERG target power, SIM slope grade, and resistance commands",
+        "MockTransport simulates realistic power lag, HR kinetics, cadence, --time-scale acceleration, and scripted cadence=0/dropout fault injection",
+        "Workout engine runs monotonic 1Hz state machine (Idle/Armed/Running/Paused/AutoPaused/Completed) with ERG bias, skip/prev, and 3s cadence-zero auto-pause + 3s recovery ramp",
+        "cargo test and cargo clippy --all-targets -- -D warnings pass with zero warnings"
+      ],
+      "verify_cmd": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test"
+    },
+    {
+      "id": "M4-02",
+      "milestone": "M4",
+      "title": "Implement Rust crash-safe SQLite WAL recorder, rustyfit FIT v2.0 encoder, and Rust physiology calculator matching golden-ride.json",
+      "status": "pending",
+      "depends_on": ["M4-01"],
+      "files_expected": [
+        "crates/trainer-bridge/src/storage/sqlite.rs",
+        "crates/trainer-bridge/src/fit/encoder.rs",
+        "crates/trainer-bridge/src/physiology/mod.rs",
+        "crates/trainer-bridge/tests/golden_parity.rs"
+      ],
+      "acceptance_criteria": [
+        "Local SQLite WAL DB persists ride metadata and 1Hz samples crash-safely and detects unfinished rides on startup",
+        "rustyfit encoder generates valid FIT v2.0 cycling activity files (file_id, event, record, lap, session, activity) verified by round-trip FIT decode test",
+        "Rust physiology engine matches packages/shared/fixtures/golden-ride.json outputs within strict tolerance (NP/IF/TSS/VI/EF/Pw:HR/MMP/intervals/quality flags)"
+      ],
+      "verify_cmd": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test"
+    },
+    {
+      "id": "M4-03",
+      "milestone": "M4",
+      "title": "Implement Rust axum HTTP/WebSocket server (/health, /ws) and retryable idempotent Cloudflare uploader",
+      "status": "pending",
+      "depends_on": ["M4-02"],
+      "files_expected": [
+        "crates/trainer-bridge/src/server/mod.rs",
+        "crates/trainer-bridge/src/uploader/mod.rs",
+        "crates/trainer-bridge/src/main.rs",
+        "crates/trainer-bridge/tests/ws_and_upload.rs"
+      ],
+      "acceptance_criteria": [
+        "axum server serves GET /health and GET /ws implementing the full JSON protocol in docs/ARCHITECTURE.md",
+        "Uploader persists pending uploads in SQLite, sends multipart .fit + summary JSON with X-Bridge-Token and ride_uuid, and retries with exponential backoff on 5xx/network errors",
+        "Integration tests verify WebSocket workout control and upload retry recovery against a mock HTTP server"
+      ],
+      "verify_cmd": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test"
+    },
+    {
+      "id": "M5-01",
+      "milestone": "M5",
+      "title": "Build React + Vite + Tailwind PWA shell, auth flow, offline Service Worker, idle auto-reload, and Bridge WebSocket client",
+      "status": "pending",
+      "depends_on": ["M2-04"],
+      "files_expected": [
+        "apps/web/vite.config.ts",
+        "apps/web/public/manifest.webmanifest",
+        "apps/web/src/lib/api.ts",
+        "apps/web/src/lib/bridge-client.ts",
+        "apps/web/src/lib/auto-update.ts",
+        "apps/web/src/App.tsx"
+      ],
+      "acceptance_criteria": [
+        "PWA builds cleanly into apps/web/dist served by apps/worker static assets",
+        "Auto-update polls /api/version when idle and never reloads during an active/paused workout",
+        "BridgeClient reconnects automatically to ws://127.0.0.1:8765/ws and rehydrates active ride state on refresh",
+        "Unit tests cover BridgeClient reconnect and auto-reload gating logic"
+      ],
+      "verify_cmd": "npm --workspace @paincave/web run typecheck && npm --workspace @paincave/web run test && npm --workspace @paincave/web run build"
+    },
+    {
+      "id": "M5-02",
+      "milestone": "M5",
+      "title": "Build Live Workout Player UI with uPlot real-time telemetry graph, interval HUD, coaching cues, ERG controls, and post-ride RPE modal",
+      "status": "pending",
+      "depends_on": ["M5-01"],
+      "files_expected": [
+        "apps/web/src/pages/RidePage.tsx",
+        "apps/web/src/components/LiveWorkoutChart.tsx",
+        "apps/web/src/components/PostRideModal.tsx",
+        "apps/web/src/components/__tests__/RidePage.test.tsx"
+      ],
+      "acceptance_criteria": [
+        "Displays large, basement-readable Power (3s & instant), Target Power, HR, Cadence, Step Remaining, and LLM Coaching Cue banner",
+        "Renders planned workout profile with live scrolling power/HR uPlot overlay",
+        "Supports Start, Pause/Resume, Skip/Prev Step, ERG bias +/- 5%, and 10-second post-ride RPE (1-10) / Feel (1-5) / Notes submission"
+      ],
+      "verify_cmd": "npm --workspace @paincave/web run typecheck && npm --workspace @paincave/web run test && npm --workspace @paincave/web run build"
+    },
+    {
+      "id": "M5-03",
+      "milestone": "M5",
+      "title": "Build Calendar, Workout Library (with preview & Load on Trainer), Analytics (PMC/MMP/Intervals/.fit upload), and Settings views",
+      "status": "pending",
+      "depends_on": ["M5-02"],
+      "files_expected": [
+        "apps/web/src/pages/CalendarPage.tsx",
+        "apps/web/src/pages/WorkoutsPage.tsx",
+        "apps/web/src/pages/AnalyticsPage.tsx",
+        "apps/web/src/pages/SettingsPage.tsx"
+      ],
+      "acceptance_criteria": [
+        "Calendar shows weekly planned vs completed sessions with one-click Load on Trainer handoff",
+        "Workouts view previews interval graphs and allows .zwo/.erg download",
+        "Analytics displays PMC (CTL/ATL/TSB) chart, 42d/90d MMP curve, per-interval compliance table, and manual outdoor .fit upload dropzone",
+        "Settings manages thresholds, bridge URL/status, Strava status, and MCP setup info"
+      ],
+      "verify_cmd": "npm --workspace @paincave/web run typecheck && npm --workspace @paincave/web run test && npm --workspace @paincave/web run build"
+    },
+    {
+      "id": "M6-01",
+      "milestone": "M6",
+      "title": "Implement Rust BleTransport (btleplug + ftms) for KICKR v5 FTMS & Polar H10 HR plus probe-ble CLI diagnostic",
+      "status": "pending",
+      "depends_on": ["M4-03"],
+      "files_expected": [
+        "crates/trainer-bridge/src/transport/ble.rs",
+        "crates/trainer-bridge/src/transport/ble_parse.rs"
+      ],
+      "acceptance_criteria": [
+        "Implements FTMS 0x1826 (Indoor Bike Data 0x2AD2 + Control Point 0x2AD9: Request Control, Start, Set Target Power, Set Indoor Bike Simulation) using ftms + btleplug",
+        "Subscribes to Polar H10 BLE Heart Rate 0x180D / 0x2A37 and merges 1Hz telemetry with auto-reconnect",
+        "Provides trainer-bridge probe-ble CLI subcommand for 10s Linux BlueZ hardware verification",
+        "Unit tests cover binary GATT packet parsing for Indoor Bike Data, HR Measurement (8-bit and 16-bit flags), and FTMS Control Point responses"
+      ],
+      "verify_cmd": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test"
+    },
+    {
+      "id": "M6-02",
+      "milestone": "M6",
+      "title": "Implement outbound Strava OAuth connect/refresh and background .fit upload via ctx.waitUntil",
+      "status": "pending",
+      "depends_on": ["M2-04"],
+      "files_expected": [
+        "apps/worker/src/routes/strava.ts",
+        "apps/worker/src/lib/strava-client.ts",
+        "apps/worker/test/strava.test.ts"
+      ],
+      "acceptance_criteria": [
+        "Implements /api/strava/connect, /api/strava/callback, /api/strava/status, and /api/strava/retry/:ride_uuid",
+        "Automatically refreshes expired OAuth tokens and uploads indoor .fit files via POST /api/v3/uploads inside ctx.waitUntil without blocking ride save response",
+        "Vitest tests mock Strava OAuth token exchange, token refresh, and multipart .fit upload verifying exact request payloads and D1 status updates"
+      ],
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+    },
+    {
+      "id": "M7-01",
+      "milestone": "M7",
+      "title": "Complete and pass full vertical simulation E2E loop (scripts/sim-e2e.sh): MCP -> Mock Bridge -> ERG Guard -> Retry Upload -> R2/D1 -> MCP Readback",
+      "status": "pending",
+      "depends_on": ["M3-02", "M4-03", "M5-03", "M6-01", "M6-02"],
+      "files_expected": [
+        "scripts/sim-e2e.sh",
+        "scripts/sim-e2e-driver.mjs"
+      ],
+      "acceptance_criteria": [
+        "Starts local Worker (wrangler dev --local) with D1 migrations + compiled Rust trainer-bridge in --mock --time-scale 60 mode",
+        "Calls /mcp create_workout and schedule_workout",
+        "Drives full accelerated workout over ws://127.0.0.1:8765/ws including injected cadence=0 ERG spiral-of-death recovery and simulated upload retry",
+        "Asserts valid .fit stored in R2, exact D1 rides/ride_intervals/ride_peaks/daily_pmc rows, and clean MCP get_ride_detail & get_fitness_overview readback"
+      ],
+      "verify_cmd": "./scripts/sim-e2e.sh && ./scripts/verify.sh --strict"
+    },
+    {
+      "id": "M7-02",
+      "milestone": "M7",
+      "title": "Finalize basement Linux deployment automation (systemd unit, deploy-basement.sh, Cloudflare production deploy runbook) and HIL checklist",
+      "status": "pending",
+      "depends_on": ["M7-01"],
+      "files_expected": [
+        "crates/trainer-bridge/systemd/paincave-bridge.service",
+        "scripts/deploy-basement.sh",
+        "docs/DEPLOYMENT.md"
+      ],
+      "acceptance_criteria": [
+        "cargo build --release --manifest-path crates/trainer-bridge/Cargo.toml succeeds cleanly",
+        "wrangler deploy --dry-run succeeds with apps/web/dist built and bundled",
+        "docs/DEPLOYMENT.md provides step-by-step Cloudflare resource creation, Strava API setup, MCP client connection, and basement Linux BLE probe/systemd setup"
+      ],
+      "verify_cmd": "cargo build --release && npm run build && ./scripts/verify.sh --strict"
+    }
+  ]
+}

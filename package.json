@@ -1,0 +1,22 @@
+{
+  "name": "paincave",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "npm run --workspaces --if-present typecheck",
+    "test": "npm run --workspaces --if-present test",
+    "build": "npm run --workspaces --if-present build",
+    "lint": "npm run --workspaces --if-present lint",
+    "verify": "./scripts/verify.sh",
+    "task:next": "node scripts/next-task.mjs",
+    "task:all": "node scripts/next-task.mjs --all"
+  }
+}
