@@ -1,103 +1,93 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
+import { parseAllowedUserEmails } from "../src/lib/better-auth.js";
+import { createTestSession, resetTestAuth } from "./auth-helper.js";
 
 const testEnv = env as typeof env & {
   ALLOWED_OWNER_EMAIL?: string;
   ALLOWED_USER_EMAILS?: string;
 };
 
-function extractSessionCookie(headers: Headers): string {
-  const getSetCookie = (headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
-  const cookies = getSetCookie ? getSetCookie.call(headers) : [headers.get("Set-Cookie") ?? ""];
-  return cookies
-    .map((c) => c.split(";")[0]?.trim() ?? "")
-    .filter((pair) => pair.includes("better-auth.session_token="))
-    .join("; ");
-}
-
-describe("Single-User Better Auth (Owner Lock, Sessions, & MCP OAuth)", () => {
+describe("Google-only Better Auth (Owner Lock, Sessions, & MCP OAuth)", () => {
   afterEach(async () => {
     testEnv.ALLOWED_OWNER_EMAIL = undefined;
     testEnv.ALLOWED_USER_EMAILS = undefined;
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM passkey"),
-      env.DB.prepare("DELETE FROM session"),
-      env.DB.prepare("DELETE FROM account"),
-      env.DB.prepare("DELETE FROM verification"),
-      env.DB.prepare("DELETE FROM user"),
-      env.DB.prepare("DELETE FROM athlete_profile WHERE user_id != 'default_owner'"),
-    ]);
+    await resetTestAuth();
   });
 
-  it("blocks unauthorized emails when ALLOWED_OWNER_EMAIL is set", async () => {
-    testEnv.ALLOWED_OWNER_EMAIL = "owner@example.com";
+  it("starts Google OAuth and removes legacy password and email-password endpoints", async () => {
+    const social = await exports.default.fetch(
+      "https://paincave.test/api/auth/sign-in/social",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "https://paincave.test",
+        },
+        body: JSON.stringify({
+          provider: "google",
+          callbackURL: "/",
+          errorCallbackURL: "/",
+        }),
+      }
+    );
+    expect(social.status).toBe(200);
+    const body = await social.json<{ url: string; redirect: boolean }>();
+    expect(body.redirect).toBe(true);
+    expect(body.url).toContain("accounts.google.com");
+    expect(decodeURIComponent(body.url)).toContain("/api/auth/callback/google");
 
-    const blocked = await exports.default.fetch("https://paincave.test/api/auth/sign-up/email", {
+    const legacy = await exports.default.fetch("https://paincave.test/api/auth/login", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Origin: "https://paincave.test",
-      },
-      body: JSON.stringify({
-        name: "Intruder",
-        email: "intruder@example.com",
-        password: "strong-password-123",
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "not-valid" }),
     });
-    expect(blocked.status).toBe(403);
+    expect(legacy.status).toBe(404);
 
-    const countRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM user").first<{
-      cnt: number;
-    }>();
-    expect(countRow?.cnt).toBe(0);
+    const emailPassword = await exports.default.fetch(
+      "https://paincave.test/api/auth/sign-in/email",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "https://paincave.test",
+        },
+        body: JSON.stringify({
+          email: "owner@example.com",
+          password: "not-valid",
+        }),
+      }
+    );
+    expect(emailPassword.status).toBe(400);
   });
 
-  it("allows claiming a single owner account, locks out second signups, accesses protected APIs, and approves MCP OAuth", async () => {
-    // 1. Fresh instance reports has_owner = false
+  it("reports Google provider state and applies owner allowlists", async () => {
+    testEnv.ALLOWED_OWNER_EMAIL = "owner@example.com";
+    expect(parseAllowedUserEmails(testEnv)).toEqual(["owner@example.com"]);
+
+    testEnv.ALLOWED_OWNER_EMAIL = undefined;
+    testEnv.ALLOWED_USER_EMAILS = "cyclist@example.com, runner@example.com";
+    expect(parseAllowedUserEmails(testEnv)).toEqual([
+      "cyclist@example.com",
+      "runner@example.com",
+    ]);
+
     const me0 = await exports.default.fetch("https://paincave.test/api/auth/me");
     const me0Body = await me0.json<{
       authenticated: boolean;
       has_owner: boolean;
-      providers: { email_password: boolean; passkey: boolean };
+      providers: { google: boolean };
     }>();
     expect(me0Body.authenticated).toBe(false);
     expect(me0Body.has_owner).toBe(false);
-    expect(me0Body.providers.email_password).toBe(true);
-    expect(me0Body.providers.passkey).toBe(true);
+    expect(me0Body.providers.google).toBe(true);
+  });
 
-    // 2. Owner creates the single account
-    const signUpRes = await exports.default.fetch("https://paincave.test/api/auth/sign-up/email", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Origin: "https://paincave.test",
-      },
-      body: JSON.stringify({
-        name: "Rider Owner",
-        email: "owner@example.com",
-        password: "strong-password-123",
-      }),
-    });
-    expect(signUpRes.status).toBe(200);
-    const baCookie = extractSessionCookie(signUpRes.headers);
-    expect(baCookie).toContain("better-auth.session_token=");
+  it("accepts a Google-style Better Auth session and approves MCP OAuth", async () => {
+    testEnv.ALLOWED_OWNER_EMAIL = "owner@example.com";
+    testEnv.ALLOWED_USER_EMAILS = "owner@example.com";
+    const baCookie = await createTestSession("Rider Owner", "owner@example.com");
 
-    // 3. Second user signup is strictly blocked (single-owner lock)
-    const secondRes = await exports.default.fetch("https://paincave.test/api/auth/sign-up/email", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Origin: "https://paincave.test",
-      },
-      body: JSON.stringify({
-        name: "Second User",
-        email: "second@example.com",
-        password: "another-password-123",
-      }),
-    });
-    expect(secondRes.status).toBe(403);
-
-    // 4. /api/auth/me and protected API accept Better Auth session
     const me1 = await exports.default.fetch("https://paincave.test/api/auth/me", {
       headers: { Cookie: baCookie },
     });
@@ -117,7 +107,6 @@ describe("Single-User Better Auth (Owner Lock, Sessions, & MCP OAuth)", () => {
     });
     expect(profileRes.status).toBe(200);
 
-    // 5. Active Better Auth session approves MCP OAuth /oauth/authorize without admin password
     const regRes = await exports.default.fetch("https://paincave.test/oauth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -156,7 +145,6 @@ describe("Single-User Better Auth (Owner Lock, Sessions, & MCP OAuth)", () => {
     expect(authPost.status).toBe(302);
     expect(authPost.headers.get("Location")).toContain("https://client.example/cb?code=");
 
-    // 6. Logout revokes Better Auth session
     const logoutRes = await exports.default.fetch("https://paincave.test/api/auth/logout", {
       method: "POST",
       headers: { Cookie: baCookie },
@@ -167,42 +155,5 @@ describe("Single-User Better Auth (Owner Lock, Sessions, & MCP OAuth)", () => {
       headers: { Cookie: baCookie },
     });
     expect(afterLogout.status).toBe(401);
-  });
-
-  it("allows multiple invited emails via ALLOWED_USER_EMAILS while blocking uninvited accounts", async () => {
-    testEnv.ALLOWED_USER_EMAILS = "cyclist@example.com, runner@example.com";
-
-    const u1 = await exports.default.fetch("https://paincave.test/api/auth/sign-up/email", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Origin: "https://paincave.test" },
-      body: JSON.stringify({
-        name: "Cyclist",
-        email: "cyclist@example.com",
-        password: "strong-password-123",
-      }),
-    });
-    expect(u1.status).toBe(200);
-
-    const u2 = await exports.default.fetch("https://paincave.test/api/auth/sign-up/email", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Origin: "https://paincave.test" },
-      body: JSON.stringify({
-        name: "Runner",
-        email: "runner@example.com",
-        password: "strong-password-456",
-      }),
-    });
-    expect(u2.status).toBe(200);
-
-    const u3 = await exports.default.fetch("https://paincave.test/api/auth/sign-up/email", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Origin: "https://paincave.test" },
-      body: JSON.stringify({
-        name: "Stranger",
-        email: "stranger@example.com",
-        password: "strong-password-789",
-      }),
-    });
-    expect(u3.status).toBe(403);
   });
 });

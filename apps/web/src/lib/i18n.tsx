@@ -212,11 +212,6 @@ const MESSAGES = {
     en: "Claim this self-hosted instance by creating the single owner account.",
   },
   "auth.continue_google": { "fr-CA": "Continuer avec Google", en: "Continue with Google" },
-  "auth.sign_in_passkey": { "fr-CA": "Connexion avec clé d'accès", en: "Sign in with Passkey" },
-  "auth.or_email": { "fr-CA": "ou par courriel", en: "or with email" },
-  "auth.name": { "fr-CA": "Nom", en: "Name" },
-  "auth.email": { "fr-CA": "Courriel", en: "Email" },
-  "auth.password": { "fr-CA": "Mot de passe", en: "Password" },
   "auth.please_wait": { "fr-CA": "Un instant...", en: "Please wait..." },
 } as const;
 

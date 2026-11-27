@@ -184,7 +184,6 @@ async function runBridgeWorkoutSession(wsUrl, loadPayload) {
 
 async function main() {
   const { workerUrl, bridgeUrl } = parseArgs(process.argv.slice(2));
-  const uiPassword = requireEnv("E2E_UI_PASSWORD");
   const bridgeToken = requireEnv("E2E_BRIDGE_TOKEN");
   const mcpTokenA = requireEnv("E2E_MCP_TOKEN");
   const today = new Date().toISOString().slice(0, 10);
@@ -199,7 +198,7 @@ async function main() {
   assert.equal(workerHealth.status, 200);
   assert.equal(bridgeHealth.status, 200);
 
-  console.log("[e2e] 2. Signing up User A (Cyclist) via Better Auth allowlist & verifying legacy login...");
+  console.log("[e2e] 2. Signing up User A (Cyclist) via Better Auth allowlist...");
   const userASignUp = await signUpBetterAuth(
     workerUrl,
     "Cyclist E2E",
@@ -209,14 +208,6 @@ async function main() {
   assert.equal(userASignUp.res.status, 200, "Expected User A Better Auth signup to succeed");
   const cookieA = userASignUp.cookie;
   assert.ok(cookieA.includes("better-auth.session_token="), "Expected Better Auth session cookie");
-
-  // Also verify legacy UI login remains intact
-  const legacyLogin = await fetch(`${workerUrl}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: uiPassword }),
-  });
-  assert.equal(legacyLogin.status, 200);
 
   const profARes = await fetch(`${workerUrl}/api/athlete/profile`, {
     headers: { Cookie: cookieA },

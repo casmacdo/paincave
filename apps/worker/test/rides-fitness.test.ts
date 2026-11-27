@@ -1,15 +1,10 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, it, expect } from "vitest";
 import goldenRide from "../../../packages/shared/fixtures/golden-ride.json" with { type: "json" };
+import { createTestSession } from "./auth-helper.js";
 
 async function loginCookie(): Promise<string> {
-  const res = await exports.default.fetch("https://paincave.test/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: "paincave-test-pw" }),
-  });
-  expect(res.status).toBe(200);
-  return (res.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
+  return createTestSession("Rides Owner", "rides-owner@example.com");
 }
 
 describe("Idempotent Ride Ingestion, PMC & Fitness Overview", () => {

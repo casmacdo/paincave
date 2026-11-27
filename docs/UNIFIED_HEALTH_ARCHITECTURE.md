@@ -15,7 +15,7 @@ This specification defines the evolution of PainCave from a single-user indoor c
    - **High-Signal MCP Views (`/mcp`):** One compact briefing tool (`get_health_and_training_brief`) plus historical rollup & drill-down tools so LLMs see multi-year trends and baseline-relative HRV/readiness without blowing up context windows.
 4. **Strict Multi-User Isolation with Allowlist Access:**
    - One Cloudflare Worker + one D1 database + one R2 bucket.
-   - Better Auth + Google Sign-In + Passkeys gated by `ALLOWED_USER_EMAILS` (comma-separated allowlist; keeps single-owner lock when unset).
+   - Better Auth + Google Sign-In gated by `ALLOWED_USER_EMAILS` (comma-separated allowlist; keeps single-owner lock when unset).
    - Every D1 table, R2 object prefix, MCP OAuth token, and device token is strictly bound to `user_id`.
 5. **Sport-Aware UI:**
    - Users without an indoor trainer (e.g., runners) have `features.indoor_trainer = false`, hiding KICKR **Ride** and **Routes** navigation tabs cleanly while preserving calendar, analytics, workouts, readiness, and MCP settings.
@@ -35,7 +35,7 @@ This specification defines the evolution of PainCave from a single-user indoor c
 
                      ▼
 [Cloudflare Free Tier Stack ($0/mo)]
-  ├── Better Auth (Google OAuth + Passkeys + ALLOWED_USER_EMAILS allowlist)
+  ├── Better Auth (Google OAuth + ALLOWED_USER_EMAILS allowlist)
   ├── D1 SQLite (user_id isolated: rides/activities, activity_laps, daily_biometrics, daily_pmc, workouts, memory)
   ├── R2 Vault (users/{user_id}/activities/*.fit)
   ├── React PWA (Calendar, Analytics, Workouts, Settings; Trainer tabs opt-in per user)
@@ -65,7 +65,7 @@ This specification defines the evolution of PainCave from a single-user indoor c
    - Web UI Better Auth session → `session.user.id`.
    - MCP OAuth 2.1 Bearer token → `mcp_oauth_tokens.user_id` (bound at `/oauth/authorize` approval time).
    - Per-user device / importer / CLI token → `user_device_tokens.user_id` (SHA-256 hash lookup).
-   - Legacy `BRIDGE_DEVICE_TOKEN`, `MCP_BEARER_TOKEN`, and legacy admin password → resolved to primary owner `user.id` (first user created) so existing basement hardware and CLI configs continue working without interruption.
+   - Legacy `BRIDGE_DEVICE_TOKEN` and `MCP_BEARER_TOKEN` → resolved to the primary owner `user.id` (first user created) so existing basement hardware and CLI configs continue working without interruption.
 3. **Mandatory Query Scoping:**
    - Every service function requires `userId: string` explicitly; every SQL query filters `WHERE user_id = ?`.
    - Cross-user regression tests assert HTTP `404` / empty results when User B requests any resource UUID belonging to User A across REST APIs, R2 downloads, and MCP tools.

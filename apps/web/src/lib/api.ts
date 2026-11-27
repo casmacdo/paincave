@@ -6,10 +6,7 @@ import type {
 } from "@paincave/shared";
 
 export interface AuthProvidersInfo {
-  email_password: boolean;
-  passkey: boolean;
   google: boolean;
-  legacy_password: boolean;
 }
 
 export interface AuthUserSummary {
@@ -22,7 +19,7 @@ export interface AuthUserSummary {
 export interface AuthState {
   authenticated: boolean;
   configured: boolean;
-  auth_mode?: "better_auth" | "legacy_password" | null;
+  auth_mode?: "better_auth" | null;
   user?: AuthUserSummary | null;
   has_owner?: boolean;
   owner_email_restricted?: boolean;
@@ -186,12 +183,6 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 export const api = {
   getVersion: () => requestJson<{ build_sha: string; app_env: string }>("/api/version"),
   getMe: () => requestJson<AuthState>("/api/auth/me"),
-  login: (password: string) =>
-    requestJson<{ ok: boolean }>("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
-    }),
   logout: () => requestJson<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
 
   getProfile: () =>

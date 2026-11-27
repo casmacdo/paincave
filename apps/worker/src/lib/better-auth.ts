@@ -1,16 +1,11 @@
 import { betterAuth } from "better-auth";
 import { APIError } from "better-auth/api";
-import { passkey } from "@better-auth/passkey";
 import type { AppEnv } from "../types.js";
-import { hashPasswordPbkdf2, verifyPasswordPbkdf2 } from "./auth.js";
 
 export const DEFAULT_OWNER_USER_ID = "default_owner";
 
 export interface AuthProvidersInfo {
-  email_password: boolean;
-  passkey: boolean;
   google: boolean;
-  legacy_password: boolean;
 }
 
 export interface BetterAuthUserSummary {
@@ -56,14 +51,7 @@ export function resolveAuthBaseUrl(env: AppEnv, requestUrl: string): string {
 export function getConfiguredProviders(env: AppEnv): AuthProvidersInfo {
   const hasSecret = resolveBetterAuthSecret(env) !== null;
   return {
-    email_password: hasSecret,
-    passkey: hasSecret,
     google: Boolean(hasSecret && env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
-    legacy_password: Boolean(
-      env.UI_ADMIN_PASSWORD_HASH &&
-        env.SESSION_SIGNING_SECRET &&
-        env.SESSION_SIGNING_SECRET.length >= 16
-    ),
   };
 }
 
@@ -194,13 +182,7 @@ export function createBetterAuth(env: AppEnv, requestUrl: string) {
     // Better Auth 1.7 natively detects Cloudflare D1 bindings via Kysely D1SqliteDialect
     database: env.DB,
     emailAndPassword: {
-      enabled: true,
-      minPasswordLength: 8,
-      // Use native WebCrypto PBKDF2 so hashing stays well within Cloudflare Workers CPU budgets
-      password: {
-        hash: (password) => hashPasswordPbkdf2(password),
-        verify: ({ hash, password }) => verifyPasswordPbkdf2(password, hash),
-      },
+      enabled: false,
     },
     account: {
       accountLinking: {
@@ -209,11 +191,6 @@ export function createBetterAuth(env: AppEnv, requestUrl: string) {
       },
     },
     socialProviders,
-    plugins: [
-      passkey({
-        rpName: "PainCave",
-      }),
-    ],
     advanced: {
       ipAddress: {
         ipAddressHeaders: ["cf-connecting-ip"],

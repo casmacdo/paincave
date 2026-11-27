@@ -10,7 +10,6 @@ import { VersionAutoReloader } from "./lib/auto-update.js";
 import { I18nProvider, useI18n } from "./lib/i18n.js";
 import { ThemeProvider, useTheme } from "./lib/theme.js";
 import { AuthScreen } from "./components/AuthScreen.js";
-import { PasskeyPromptBanner } from "./components/PasskeyPromptBanner.js";
 import { TrainerMenu } from "./components/TrainerMenu.js";
 import { OverviewPage } from "./pages/OverviewPage.js";
 import { CalendarPage } from "./pages/CalendarPage.js";
@@ -256,8 +255,6 @@ function AppShell() {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-6">
-        <PasskeyPromptBanner authState={authState} />
-
         {tab === "overview" && (
           <OverviewPage onNavigateTab={(next) => setTab(next)} />
         )}

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { decryptSecret, encryptSecret } from "../src/lib/crypto.js";
 import { GARMIN_PERSONAL_API_BASE } from "../src/lib/garmin-client.js";
 import { unwrapFitZipBytes } from "../src/lib/zip-fit.js";
+import { createTestSession } from "./auth-helper.js";
 
 const testEnv = env as typeof env & { ALLOWED_USER_EMAILS?: string };
 
@@ -48,15 +49,6 @@ function buildRunFitBytes(): Uint8Array {
   bytes[11] = 0x54;
   bytes.push(0, 0);
   return new Uint8Array(bytes);
-}
-
-function extractSessionCookie(headers: Headers): string {
-  const getSetCookie = (headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
-  const cookies = getSetCookie ? getSetCookie.call(headers) : [headers.get("Set-Cookie") ?? ""];
-  return cookies
-    .map((c) => c.split(";")[0]?.trim() ?? "")
-    .filter((pair) => pair.includes("better-auth.session_token="))
-    .join("; ");
 }
 
 describe("Garmin Connect Personal API Sync & Encrypted Credentials", () => {
@@ -153,17 +145,7 @@ describe("Garmin Connect Personal API Sync & Encrypted Credentials", () => {
 
   it("connects Garmin key, caches 24h JWT, imports running FIT + laps + daily HRV/sleep idempotently, and handles 429 cleanly", async () => {
     testEnv.ALLOWED_USER_EMAILS = "runner@example.com";
-    const signUp = await exports.default.fetch("https://paincave.test/api/auth/sign-up/email", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Origin: "https://paincave.test" },
-      body: JSON.stringify({
-        name: "Runner",
-        email: "runner@example.com",
-        password: "strong-password-123",
-      }),
-    });
-    expect(signUp.status).toBe(200);
-    const cookie = extractSessionCookie(signUp.headers);
+    const cookie = await createTestSession("Runner", "runner@example.com");
 
     const today = new Date().toISOString().slice(0, 10);
     let tokenCalls = 0;

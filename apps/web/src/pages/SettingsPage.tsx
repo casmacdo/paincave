@@ -6,16 +6,7 @@ import {
   type AuthState,
   type DeviceTokenRecord,
 } from "../lib/api.js";
-import { authClient } from "../lib/auth-client.js";
 import { useI18n } from "../lib/i18n.js";
-
-interface PasskeyRecord {
-  id: string;
-  name?: string | null;
-  deviceType: string;
-  backedUp: boolean;
-  createdAt?: string | Date | null;
-}
 
 interface SettingsPageProps {
   profile?: AthleteProfile | null;
@@ -93,31 +84,9 @@ export function SettingsPage({
   const [createdTokenValue, setCreatedTokenValue] = useState<string | null>(null);
   const [tokenBusy, setTokenBusy] = useState(false);
 
-  // Passkeys (secondary in Settings)
-  const [showPasskeys, setShowPasskeys] = useState(false);
-  const [passkeys, setPasskeys] = useState<PasskeyRecord[]>([]);
-  const [passkeyName, setPasskeyName] = useState("");
-  const [addingPasskey, setAddingPasskey] = useState(false);
-
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
-  const [authErr, setAuthErr] = useState<string | null>(null);
 
   const isBetterAuth = authState?.auth_mode === "better_auth";
-
-  const loadPasskeys = useCallback(async () => {
-    if (!isBetterAuth) {
-      setPasskeys([]);
-      return;
-    }
-    try {
-      const res = await authClient.passkey.listUserPasskeys();
-      if (Array.isArray(res.data)) {
-        setPasskeys(res.data);
-      }
-    } catch {
-      // Ignore in non-WebAuthn contexts
-    }
-  }, [isBetterAuth]);
 
   const loadTokens = useCallback(async () => {
     try {
@@ -133,9 +102,6 @@ export function SettingsPage({
     void loadTokens();
   }, [loadTokens]);
 
-  useEffect(() => {
-    void loadPasskeys();
-  }, [loadPasskeys]);
 
   const origin =
     typeof window !== "undefined" ? window.location.origin : "https://paincave.workers.dev";
@@ -307,44 +273,6 @@ export function SettingsPage({
   const handleDeleteToken = async (tokenHash: string) => {
     await api.deleteDeviceToken(tokenHash);
     setTokens((prev) => prev.filter((item) => item.token_hash !== tokenHash));
-  };
-
-  const handleAddPasskey = async () => {
-    setAddingPasskey(true);
-    setAuthErr(null);
-    setSavedMsg(null);
-    try {
-      const res = await authClient.passkey.addPasskey({
-        name: passkeyName.trim() || (locale === "fr-CA" ? "Mon appareil" : "My Device"),
-      });
-      if (res?.error) {
-        setAuthErr(res.error.message ?? "Could not register passkey");
-      } else {
-        setPasskeyName("");
-        setSavedMsg(
-          locale === "fr-CA" ? "Nouvelle clé d'accès enregistrée." : "Registered new passkey."
-        );
-        await loadPasskeys();
-      }
-    } catch (err) {
-      setAuthErr(err instanceof Error ? err.message : "Passkey registration cancelled");
-    } finally {
-      setAddingPasskey(false);
-    }
-  };
-
-  const handleDeletePasskey = async (id: string) => {
-    setAuthErr(null);
-    try {
-      const res = await authClient.passkey.deletePasskey({ id });
-      if (res?.error) {
-        setAuthErr(res.error.message ?? "Could not delete passkey");
-      } else {
-        setPasskeys((prev) => prev.filter((p) => p.id !== id));
-      }
-    } catch (err) {
-      setAuthErr(err instanceof Error ? err.message : "Failed to delete passkey");
-    }
   };
 
   const applyPresetDays = (days: number) => {
@@ -695,7 +623,7 @@ export function SettingsPage({
         </section>
       </div>
 
-      {/* Account & Security (clean, zero developer env-var noise; Passkeys tucked neatly) */}
+      {/* Account */}
       <section className="space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -704,22 +632,11 @@ export function SettingsPage({
               {isBetterAuth && authState?.user
                 ? `${authState.user.name} (${authState.user.email})`
                 : locale === "fr-CA"
-                  ? "Connecté avec mot de passe administrateur."
-                  : "Signed in via admin password."}
+                  ? "Connecté avec Google."
+                  : "Signed in with Google."}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {isBetterAuth && (
-              <button
-                type="button"
-                onClick={() => setShowPasskeys((open) => !open)}
-                className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs font-semibold text-zinc-200 hover:bg-zinc-700"
-              >
-                {locale === "fr-CA"
-                  ? `Clés d'accès (${passkeys.length})`
-                  : `Passkeys (${passkeys.length})`}
-              </button>
-            )}
             {onSignOut && (
               <button
                 type="button"
@@ -731,81 +648,6 @@ export function SettingsPage({
             )}
           </div>
         </div>
-
-        {authErr && (
-          <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-2.5 text-xs text-rose-200">
-            {authErr}
-          </div>
-        )}
-
-        {isBetterAuth && showPasskeys && (
-          <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
-            <h3 className="text-sm font-bold text-white">
-              {locale === "fr-CA"
-                ? "Clés d'accès (Touch ID / Face ID / Clé de sécurité)"
-                : "Passkeys (Touch ID / Face ID / Security Key)"}
-            </h3>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={passkeyName}
-                onChange={(e) => setPasskeyName(e.target.value)}
-                placeholder={
-                  locale === "fr-CA"
-                    ? "Nom de l'appareil (ex. Téléphone, Portable)"
-                    : "Device label (e.g. Phone, Laptop)"
-                }
-                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs text-white placeholder:text-zinc-500"
-              />
-              <button
-                type="button"
-                disabled={addingPasskey}
-                onClick={() => void handleAddPasskey()}
-                className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:opacity-60"
-              >
-                {addingPasskey
-                  ? locale === "fr-CA"
-                    ? "Enregistrement..."
-                    : "Registering..."
-                  : locale === "fr-CA"
-                    ? "+ Ajouter"
-                    : "+ Add Passkey"}
-              </button>
-            </div>
-            {passkeys.length === 0 ? (
-              <p className="text-xs text-zinc-500">
-                {locale === "fr-CA"
-                  ? "Aucune clé d'accès enregistrée."
-                  : "No passkeys registered yet."}
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {passkeys.map((pk) => (
-                  <li
-                    key={pk.id}
-                    className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs"
-                  >
-                    <div>
-                      <div className="font-semibold text-zinc-100">
-                        {pk.name || (locale === "fr-CA" ? "Clé d'accès" : "Passkey")}
-                      </div>
-                      <div className="text-[11px] text-zinc-500">
-                        {pk.deviceType} {pk.backedUp ? "· Synced" : "· Device-bound"}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleDeletePasskey(pk.id)}
-                      className="text-rose-400 hover:underline"
-                    >
-                      {locale === "fr-CA" ? "Retirer" : "Remove"}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
       </section>
     </div>
   );

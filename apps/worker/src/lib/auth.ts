@@ -7,8 +7,7 @@ import {
   type BetterAuthUserSummary,
 } from "./better-auth.js";
 
-export const SESSION_COOKIE_NAME = "paincave_session";
-const SESSION_TTL_S = 30 * 24 * 60 * 60; // 30 days
+const LEGACY_SESSION_COOKIE_NAME = "paincave_session";
 
 function toHex(buffer: ArrayBuffer | Uint8Array): string {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
@@ -17,17 +16,6 @@ function toHex(buffer: ArrayBuffer | Uint8Array): string {
     out += b.toString(16).padStart(2, "0");
   }
   return out;
-}
-
-function fromHex(hex: string): Uint8Array | null {
-  if (hex.length === 0 || hex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) {
-    return null;
-  }
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = Number.parseInt(hex.slice(i, i + 2), 16);
-  }
-  return bytes;
 }
 
 export async function sha256Bytes(input: string): Promise<ArrayBuffer> {
@@ -56,98 +44,6 @@ export async function timingSafeCompare(provided: string, expected: string): Pro
   return crypto.subtle.timingSafeEqual(aHash, bHash);
 }
 
-export async function hashPasswordPbkdf2(
-  password: string,
-  saltHex?: string,
-  iterations = 100_000
-): Promise<string> {
-  const saltBytes = saltHex
-    ? fromHex(saltHex)
-    : (() => {
-        const s = new Uint8Array(16);
-        crypto.getRandomValues(s);
-        return s;
-      })();
-  if (!saltBytes) {
-    throw new Error("Invalid hex salt");
-  }
-  const baseKey = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      salt: saltBytes,
-      iterations,
-      hash: "SHA-256",
-    },
-    baseKey,
-    256
-  );
-  return `pbkdf2_sha256$${iterations}$${toHex(saltBytes)}$${toHex(bits)}`;
-}
-
-export async function verifyPasswordPbkdf2(password: string, storedHash: string): Promise<boolean> {
-  if (!password || !storedHash) return false;
-  const parts = storedHash.split("$");
-  if (parts.length !== 4 || parts[0] !== "pbkdf2_sha256") return false;
-  const iterations = Number(parts[1]);
-  const saltHex = parts[2];
-  const expectedHex = parts[3];
-  if (!Number.isInteger(iterations) || iterations < 10_000 || iterations > 100_000 || !saltHex || !expectedHex) {
-    return false;
-  }
-  const saltBytes = fromHex(saltHex);
-  const expectedBytes = fromHex(expectedHex);
-  if (!saltBytes || !expectedBytes || expectedBytes.length !== 32) {
-    return false;
-  }
-
-  const baseKey = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      salt: saltBytes,
-      iterations,
-      hash: "SHA-256",
-    },
-    baseKey,
-    256
-  );
-  return crypto.subtle.timingSafeEqual(new Uint8Array(bits), expectedBytes);
-}
-
-async function signValue(rawToken: string, secret: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawToken));
-  return `${rawToken}.${toHex(sig)}`;
-}
-
-async function verifySignedValue(cookieVal: string, secret: string): Promise<string | null> {
-  const dot = cookieVal.indexOf(".");
-  if (dot <= 0) return null;
-  const rawToken = cookieVal.slice(0, dot);
-  const expected = await signValue(rawToken, secret);
-  const match = await timingSafeCompare(cookieVal, expected);
-  return match ? rawToken : null;
-}
-
 export function parseCookie(cookieHeader: string | undefined, name: string): string | null {
   if (!cookieHeader) return null;
   const pairs = cookieHeader.split(";");
@@ -162,39 +58,10 @@ export function parseCookie(cookieHeader: string | undefined, name: string): str
   return null;
 }
 
-export async function createUiSessionCookie(
-  env: AppEnv,
-  requestUrl: string
-): Promise<{ cookieHeader: string; expiresAt: number }> {
-  const signingSecret = env.SESSION_SIGNING_SECRET;
-  if (!signingSecret || signingSecret.length < 16) {
-    throw new Error("SESSION_SIGNING_SECRET not configured");
-  }
-
-  const rawToken = generateSecureToken(32);
-  const tokenHash = await sha256Hex(rawToken);
-  const nowSec = Math.floor(Date.now() / 1000);
-  const expiresAt = nowSec + SESSION_TTL_S;
-
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM ui_sessions WHERE expires_at <= ?").bind(nowSec),
-    env.DB.prepare("INSERT INTO ui_sessions (token_hash, expires_at) VALUES (?, ?)").bind(
-      tokenHash,
-      expiresAt
-    ),
-  ]);
-
-  const signed = await signValue(rawToken, signingSecret);
-  const isHttps = new URL(requestUrl).protocol === "https:";
-  const secureFlag = isHttps ? "; Secure" : "";
-  const cookieHeader = `${SESSION_COOKIE_NAME}=${encodeURIComponent(signed)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_S}${secureFlag}`;
-  return { cookieHeader, expiresAt };
-}
-
 export function clearUiSessionCookie(requestUrl: string): string {
   const isHttps = new URL(requestUrl).protocol === "https:";
   const secureFlag = isHttps ? "; Secure" : "";
-  return `${SESSION_COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secureFlag}`;
+  return `${LEGACY_SESSION_COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secureFlag}`;
 }
 
 export async function verifyUiSessionRequest(
@@ -202,53 +69,19 @@ export async function verifyUiSessionRequest(
 ): Promise<
   | {
       ok: true;
-      authMode: "better_auth" | "legacy_password";
+      authMode: "better_auth";
       userId: string;
       user: BetterAuthUserSummary | null;
     }
   | { ok: false; status: 401 | 503; error: string }
 > {
-  const hasBetterAuth = resolveBetterAuthSecret(c.env) !== null;
-  const signingSecret = c.env.SESSION_SIGNING_SECRET;
-  const hasLegacy = Boolean(
-    signingSecret && signingSecret.length >= 16 && c.env.UI_ADMIN_PASSWORD_HASH
-  );
-
-  if (!hasBetterAuth && !hasLegacy) {
+  if (!resolveBetterAuthSecret(c.env)) {
     return { ok: false, status: 503, error: "Authentication secrets are not configured" };
   }
 
-  // 1. Prefer Better Auth session if cookie is present
-  if (hasBetterAuth) {
-    const baUser = await getBetterAuthSessionUser(c.env, c.req.raw);
-    if (baUser) {
-      return { ok: true, authMode: "better_auth", userId: baUser.id, user: baUser };
-    }
-  }
-
-  // 2. Fallback to legacy signed paincave_session cookie
-  if (hasLegacy && signingSecret) {
-    const cookieVal = parseCookie(c.req.header("Cookie"), SESSION_COOKIE_NAME);
-    if (cookieVal) {
-      const rawToken = await verifySignedValue(cookieVal, signingSecret);
-      if (!rawToken) {
-        return { ok: false, status: 401, error: "Invalid session" };
-      }
-
-      const tokenHash = await sha256Hex(rawToken);
-      const nowSec = Math.floor(Date.now() / 1000);
-      const row = await c.env.DB.prepare(
-        "SELECT token_hash FROM ui_sessions WHERE token_hash = ? AND expires_at > ?"
-      )
-        .bind(tokenHash, nowSec)
-        .first<{ token_hash: string }>();
-
-      if (row) {
-        const ownerId = await resolvePrimaryOwnerUserId(c.env.DB);
-        return { ok: true, authMode: "legacy_password", userId: ownerId, user: null };
-      }
-      return { ok: false, status: 401, error: "Session expired or revoked" };
-    }
+  const baUser = await getBetterAuthSessionUser(c.env, c.req.raw);
+  if (baUser) {
+    return { ok: true, authMode: "better_auth", userId: baUser.id, user: baUser };
   }
 
   return { ok: false, status: 401, error: "Authentication required" };
@@ -363,7 +196,7 @@ export async function verifyMcpAuth(
   | { ok: false; status: 401 | 503; error: string }
 > {
   const hasBearer = Boolean(env.MCP_BEARER_TOKEN && env.MCP_BEARER_TOKEN.length >= 16);
-  const hasOAuth = Boolean(env.UI_ADMIN_PASSWORD_HASH || resolveBetterAuthSecret(env));
+  const hasOAuth = Boolean(resolveBetterAuthSecret(env));
   if (!hasBearer && !hasOAuth) {
     return { ok: false, status: 503, error: "MCP authentication is not configured" };
   }

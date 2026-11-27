@@ -3,13 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { AuthScreen } from "../AuthScreen.js";
 
 const mockAuthClient = vi.hoisted(() => ({
-  signUp: {
-    email: vi.fn(),
-  },
   signIn: {
-    email: vi.fn(),
     social: vi.fn(),
-    passkey: vi.fn(),
   },
 }));
 
@@ -23,10 +18,9 @@ afterEach(() => {
   window.history.replaceState({}, "", "/");
 });
 
-describe("AuthScreen (Single-User Better Auth)", () => {
-  it("shows Owner Setup on a fresh instance and creates the single owner account", async () => {
-    mockAuthClient.signUp.email.mockResolvedValue({ data: { user: { id: "u1" } }, error: null });
-    const onAuthenticated = vi.fn().mockResolvedValue(undefined);
+describe("AuthScreen (Google-only sign-in)", () => {
+  it("shows Owner Setup and starts Google sign-in on a fresh instance", async () => {
+    mockAuthClient.signIn.social.mockResolvedValue({ data: {}, error: null });
 
     render(
       <AuthScreen
@@ -35,65 +29,16 @@ describe("AuthScreen (Single-User Better Auth)", () => {
           configured: true,
           has_owner: false,
           owner_email_restricted: false,
-          providers: {
-            email_password: true,
-            passkey: true,
-            google: false,
-            legacy_password: true,
-          },
+          providers: { google: true },
         }}
-        onAuthenticated={onAuthenticated}
+        onAuthenticated={vi.fn().mockResolvedValue(undefined)}
       />
     );
 
     expect(screen.getByText("Owner Setup")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Rider Owner" } });
-    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "owner@example.com" } });
-    fireEvent.change(screen.getByLabelText("Password"), {
-      target: { value: "strong-password-123" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create Owner Account" }));
-
-    await waitFor(() => {
-      expect(mockAuthClient.signUp.email).toHaveBeenCalledWith({
-        name: "Rider Owner",
-        email: "owner@example.com",
-        password: "strong-password-123",
-      });
-      expect(onAuthenticated).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  it("shows locked single-owner Sign In with Google and Passkey buttons once claimed", async () => {
-    mockAuthClient.signIn.social.mockResolvedValue({ data: {}, error: null });
-    mockAuthClient.signIn.passkey.mockResolvedValue({
-      data: { session: {}, user: {} },
-      error: null,
-    });
-    const onAuthenticated = vi.fn().mockResolvedValue(undefined);
-
-    render(
-      <AuthScreen
-        authState={{
-          authenticated: false,
-          configured: true,
-          has_owner: true,
-          owner_email_restricted: true,
-          providers: {
-            email_password: true,
-            passkey: true,
-            google: true,
-            legacy_password: false,
-          },
-        }}
-        onAuthenticated={onAuthenticated}
-      />
-    );
-
-    expect(screen.getByText("Single-Owner Locked")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Create Owner Account" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Continue with Google" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Sign in with Passkey" })).toBeTruthy();
+    expect(screen.queryByLabelText("Email")).toBeNull();
+    expect(screen.queryByLabelText("Password")).toBeNull();
+    expect(screen.queryByText(/Legacy/i)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
     await waitFor(() => {
@@ -103,12 +48,41 @@ describe("AuthScreen (Single-User Better Auth)", () => {
         errorCallbackURL: "/",
       });
     });
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "Sign in with Passkey" }));
-    await waitFor(() => {
-      expect(mockAuthClient.signIn.passkey).toHaveBeenCalledTimes(1);
-      expect(onAuthenticated).toHaveBeenCalledTimes(1);
-    });
+  it("shows only the Google sign-in button once the owner is claimed", () => {
+    render(
+      <AuthScreen
+        authState={{
+          authenticated: false,
+          configured: true,
+          has_owner: true,
+          owner_email_restricted: true,
+          providers: { google: true },
+        }}
+        onAuthenticated={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(screen.getByText("Single-Owner Locked")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue with Google" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Passkey|Password|Email/i })).toBeNull();
+  });
+
+  it("shows a configuration error when Google OAuth is unavailable", () => {
+    render(
+      <AuthScreen
+        authState={{
+          authenticated: false,
+          configured: true,
+          has_owner: false,
+          providers: { google: false },
+        }}
+        onAuthenticated={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(screen.getByText("Google sign-in is not configured.")).toBeTruthy();
   });
 
   it("displays an error alert when redirected back from a rejected OAuth attempt", () => {
@@ -121,58 +95,12 @@ describe("AuthScreen (Single-User Better Auth)", () => {
           configured: true,
           has_owner: true,
           owner_email_restricted: true,
-          providers: {
-            email_password: true,
-            passkey: true,
-            google: true,
-            legacy_password: false,
-          },
+          providers: { google: true },
         }}
         onAuthenticated={vi.fn().mockResolvedValue(undefined)}
       />
     );
 
-    expect(screen.getByRole("alert").textContent).toContain("single owner account");
-  });
-
-  it("allows an invited second user to register via email/password when allow_registration is true", async () => {
-    mockAuthClient.signUp.email.mockResolvedValue({ data: { user: { id: "u2" } }, error: null });
-    const onAuthenticated = vi.fn().mockResolvedValue(undefined);
-
-    render(
-      <AuthScreen
-        authState={{
-          authenticated: false,
-          configured: true,
-          has_owner: true,
-          owner_email_restricted: true,
-          allow_registration: true,
-          providers: {
-            email_password: true,
-            passkey: true,
-            google: true,
-            legacy_password: false,
-          },
-        }}
-        onAuthenticated={onAuthenticated}
-      />
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /Invited user\? Create an account/i }));
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Invited Runner" } });
-    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "runner@example.com" } });
-    fireEvent.change(screen.getByLabelText("Password"), {
-      target: { value: "strong-password-456" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create Account" }));
-
-    await waitFor(() => {
-      expect(mockAuthClient.signUp.email).toHaveBeenCalledWith({
-        name: "Invited Runner",
-        email: "runner@example.com",
-        password: "strong-password-456",
-      });
-      expect(onAuthenticated).toHaveBeenCalledTimes(1);
-    });
+    expect(screen.getByRole("alert").textContent).toContain("allowlist or owner account");
   });
 });

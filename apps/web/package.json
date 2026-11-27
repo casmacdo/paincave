@@ -10,7 +10,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@better-auth/passkey": "^1.7.28",
     "@paincave/shared": "*",
     "better-auth": "^1.7.28",
     "react": "^19.0.0",

@@ -2,17 +2,12 @@ import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import goldenRide from "../../../packages/shared/fixtures/golden-ride.json" with { type: "json" };
 import { formatStravaRideDescription } from "../src/lib/strava-client.js";
+import { createTestSession } from "./auth-helper.js";
 
 const testEnv = env as typeof env & { PUBLIC_APP_URL?: string };
 
 async function loginCookie(): Promise<string> {
-  const res = await exports.default.fetch("https://paincave.test/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: "paincave-test-pw" }),
-  });
-  expect(res.status).toBe(200);
-  return (res.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
+  return createTestSession("Strava Owner", "strava-owner@example.com");
 }
 
 describe("Strava Outbound OAuth & Background FIT Upload", () => {

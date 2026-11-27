@@ -1,27 +1,9 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
 import goldenRide from "../../../packages/shared/fixtures/golden-ride.json" with { type: "json" };
+import { createTestSession } from "./auth-helper.js";
 
 const testEnv = env as typeof env & { ALLOWED_USER_EMAILS?: string };
-
-function extractSessionCookie(headers: Headers): string {
-  const getSetCookie = (headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
-  const cookies = getSetCookie ? getSetCookie.call(headers) : [headers.get("Set-Cookie") ?? ""];
-  return cookies
-    .map((c) => c.split(";")[0]?.trim() ?? "")
-    .filter((pair) => pair.includes("better-auth.session_token="))
-    .join("; ");
-}
-
-async function signUpUser(name: string, email: string, password: string): Promise<string> {
-  const res = await exports.default.fetch("https://paincave.test/api/auth/sign-up/email", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Origin: "https://paincave.test" },
-    body: JSON.stringify({ name, email, password }),
-  });
-  expect(res.status).toBe(200);
-  return extractSessionCookie(res.headers);
-}
 
 describe("Multi-User Isolation Across REST APIs, Device Tokens, and Remote MCP", () => {
   afterEach(async () => {
@@ -49,8 +31,8 @@ describe("Multi-User Isolation Across REST APIs, Device Tokens, and Remote MCP",
   it("isolates rides, workouts, thresholds, notes, device tokens, and MCP tools between User A and User B", async () => {
     testEnv.ALLOWED_USER_EMAILS = "cyclist-a@example.com, runner-b@example.com";
 
-    const cookieA = await signUpUser("Cyclist A", "cyclist-a@example.com", "password-alpha-123");
-    const cookieB = await signUpUser("Runner B", "runner-b@example.com", "password-beta-123");
+    const cookieA = await createTestSession("Cyclist A", "cyclist-a@example.com", true, true);
+    const cookieB = await createTestSession("Runner B", "runner-b@example.com", false, false);
 
     // 1. Secondary user defaults to indoor_trainer = false while primary owner defaults to true
     const profA = await (

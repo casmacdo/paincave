@@ -1,28 +1,14 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, it, expect } from "vitest";
-import { hashPasswordPbkdf2, timingSafeCompare, verifyPasswordPbkdf2 } from "../src/lib/auth.js";
+import { timingSafeCompare } from "../src/lib/auth.js";
+import { createTestSession } from "./auth-helper.js";
 
 async function loginAndGetCookie(): Promise<string> {
-  const res = await exports.default.fetch("https://paincave.test/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: "paincave-test-pw" }),
-  });
-  expect(res.status).toBe(200);
-  const setCookie = res.headers.get("Set-Cookie");
-  expect(setCookie).toBeTruthy();
-  const cookiePair = setCookie?.split(";")[0] ?? "";
-  expect(cookiePair).toContain("paincave_session=");
-  expect(setCookie).toContain("HttpOnly");
-  expect(setCookie).toContain("Secure");
-  return cookiePair;
+  return createTestSession("Rider One", "rider-one@example.com");
 }
 
 describe("Worker Authentication & Athlete API", () => {
-  it("hashes and verifies PBKDF2 passwords and timing-safe secret comparisons", async () => {
-    const hash = await hashPasswordPbkdf2("my-strong-passphrase");
-    expect(await verifyPasswordPbkdf2("my-strong-passphrase", hash)).toBe(true);
-    expect(await verifyPasswordPbkdf2("wrong-passphrase", hash)).toBe(false);
+  it("uses timing-safe secret comparisons", async () => {
     expect(await timingSafeCompare("abc123", "abc123")).toBe(true);
     expect(await timingSafeCompare("abc123", "abc1234")).toBe(false);
     expect(await timingSafeCompare("", "")).toBe(false);
@@ -32,12 +18,12 @@ describe("Worker Authentication & Athlete API", () => {
     const unauth = await exports.default.fetch("https://paincave.test/api/athlete/profile");
     expect(unauth.status).toBe(401);
 
-    const badLogin = await exports.default.fetch("https://paincave.test/api/auth/login", {
+    const badLegacyLogin = await exports.default.fetch("https://paincave.test/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password: "wrong-password" }),
     });
-    expect(badLogin.status).toBe(401);
+    expect(badLegacyLogin.status).toBe(404);
 
     // Direct fail-closed check with missing signing secret
     const res = await exports.default.fetch("https://paincave.test/api/auth/me");

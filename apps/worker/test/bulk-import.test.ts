@@ -1,17 +1,9 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildArchiveActivityItem } from "@paincave/shared";
+import { createTestSession } from "./auth-helper.js";
 
 const testEnv = env as typeof env & { ALLOWED_USER_EMAILS?: string };
-
-function extractSessionCookie(headers: Headers): string {
-  const getSetCookie = (headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
-  const cookies = getSetCookie ? getSetCookie.call(headers) : [headers.get("Set-Cookie") ?? ""];
-  return cookies
-    .map((c) => c.split(";")[0]?.trim() ?? "")
-    .filter((pair) => pair.includes("better-auth.session_token="))
-    .join("; ");
-}
 
 describe("Bulk Archive Import API, Multi-Year PMC Rebuild & History MCP Tool", () => {
   afterEach(async () => {
@@ -31,17 +23,7 @@ describe("Bulk Archive Import API, Multi-Year PMC Rebuild & History MCP Tool", (
 
   it("imports multi-year archive batches idempotently via importer token, rebuilds PMC, and serves get_training_history_summary", async () => {
     testEnv.ALLOWED_USER_EMAILS = "owner@example.com";
-    const signUp = await exports.default.fetch("https://paincave.test/api/auth/sign-up/email", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Origin: "https://paincave.test" },
-      body: JSON.stringify({
-        name: "Owner",
-        email: "owner@example.com",
-        password: "strong-password-123",
-      }),
-    });
-    expect(signUp.status).toBe(200);
-    const cookie = extractSessionCookie(signUp.headers);
+    const cookie = await createTestSession("Owner", "owner@example.com");
 
     // Mint per-user importer token & MCP token
     const impTokRes = await exports.default.fetch("https://paincave.test/api/auth/tokens", {

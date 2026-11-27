@@ -1,15 +1,10 @@
 import { exports } from "cloudflare:workers";
 import { describe, it, expect } from "vitest";
 import { decodeFitWorkout } from "@paincave/shared";
+import { createTestSession } from "./auth-helper.js";
 
 async function loginCookie(): Promise<string> {
-  const res = await exports.default.fetch("https://paincave.test/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: "paincave-test-pw" }),
-  });
-  expect(res.status).toBe(200);
-  return (res.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
+  return createTestSession("Workouts Owner", "workouts-owner@example.com");
 }
 
 const VALID_WORKOUT = {

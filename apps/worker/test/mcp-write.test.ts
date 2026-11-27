@@ -1,5 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, it, expect } from "vitest";
+import { createTestSession } from "./auth-helper.js";
 
 async function pkceChallenge(verifier: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
@@ -7,6 +8,10 @@ async function pkceChallenge(verifier: string): Promise<string> {
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
   return btoa(bin).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+async function createBetterAuthSession(): Promise<string> {
+  return createTestSession("MCP Owner", "mcp-owner@example.com");
 }
 
 async function callMcpTool<T>(
@@ -158,15 +163,17 @@ describe("MCP Write Tools Guardrails & Mobile OAuth 2.1 (PKCE + DCR)", () => {
     );
     expect(badAuthz.status).toBe(400);
 
-    // 4. GET authorize renders consent form
+    // 4. GET authorize renders the Google-authenticated consent state
+    const baCookie = await createBetterAuthSession();
     const authzGet = await exports.default.fetch(
-      `https://paincave.test/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&code_challenge=${challenge}&code_challenge_method=S256&state=xyz123`
+      `https://paincave.test/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&code_challenge=${challenge}&code_challenge_method=S256&state=xyz123`,
+      { headers: { Cookie: baCookie } }
     );
     expect(authzGet.status).toBe(200);
     expect(await authzGet.text()).toContain("Claude Mobile");
 
-    // 5. POST authorize rejects wrong password, approves right password
-    const makeForm = (pw: string): URLSearchParams =>
+    // 5. POST authorize rejects unauthenticated requests and approves a Google session
+    const makeForm = (): URLSearchParams =>
       new URLSearchParams({
         client_id: clientId,
         redirect_uri: redirectUri,
@@ -174,20 +181,22 @@ describe("MCP Write Tools Guardrails & Mobile OAuth 2.1 (PKCE + DCR)", () => {
         code_challenge: challenge,
         code_challenge_method: "S256",
         scope: "mcp:tools",
-        password: pw,
       });
 
-    const badPwRes = await exports.default.fetch("https://paincave.test/oauth/authorize", {
+    const unauthRes = await exports.default.fetch("https://paincave.test/oauth/authorize", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: makeForm("wrong-pw").toString(),
+      body: makeForm().toString(),
     });
-    expect(badPwRes.status).toBe(401);
+    expect(unauthRes.status).toBe(401);
 
     const approveRes = await exports.default.fetch("https://paincave.test/oauth/authorize", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: makeForm("paincave-test-pw").toString(),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: baCookie,
+      },
+      body: makeForm().toString(),
       redirect: "manual",
     });
     expect(approveRes.status).toBe(302);

@@ -1,15 +1,10 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import goldenRide from "../../../packages/shared/fixtures/golden-ride.json" with { type: "json" };
+import { createTestSession } from "./auth-helper.js";
 
 async function loginCookie(): Promise<string> {
-  const res = await exports.default.fetch("https://paincave.test/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: "paincave-test-pw" }),
-  });
-  expect(res.status).toBe(200);
-  return (res.headers.get("Set-Cookie") ?? "").split(";")[0] ?? "";
+  return createTestSession("Routes Owner", "routes-owner@example.com");
 }
 
 /**
@@ -162,11 +157,14 @@ describe("Routes API, FIT GPS Extraction, and Strava VirtualRide Tagging", () =>
 
     // Seed valid Strava OAuth token so uploadFitToStrava triggers
     const futureExp = Math.floor(Date.now() / 1000) + 7200;
+    const owner = await env.DB
+      .prepare("SELECT id FROM user ORDER BY createdAt ASC LIMIT 1")
+      .first<{ id: string }>();
     await env.DB.prepare(
       `INSERT OR REPLACE INTO provider_connections (user_id, provider, access_token, refresh_token, expires_at, scope, external_athlete_id, updated_at)
-       VALUES ('default_owner', 'strava', 'strava-virtual-token', 'ref-1', ?, 'activity:write,read', '12345', strftime('%Y-%m-%dT%H:%M:%SZ','now'))`
+       VALUES (?, 'strava', 'strava-virtual-token', 'ref-1', ?, 'activity:write,read', '12345', strftime('%Y-%m-%dT%H:%M:%SZ','now'))`
     )
-      .bind(futureExp)
+      .bind(owner?.id ?? "default_owner", futureExp)
       .run();
 
     let capturedSportType: string | null = null;

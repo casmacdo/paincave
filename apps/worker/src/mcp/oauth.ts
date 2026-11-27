@@ -6,12 +6,10 @@ import {
   sha256Bytes,
   sha256Hex,
   timingSafeCompare,
-  verifyPasswordPbkdf2,
 } from "../lib/auth.js";
 import {
   getBetterAuthSessionUser,
   resolveBetterAuthSecret,
-  resolvePrimaryOwnerUserId,
 } from "../lib/better-auth.js";
 
 const AUTH_CODE_TTL_S = 300; // 5 minutes
@@ -65,7 +63,6 @@ function renderAuthorizePage(params: {
   codeChallengeMethod: string;
   scope: string;
   signedInEmail?: string | null;
-  hasLegacyPassword?: boolean;
   returnToUrl?: string;
   error?: string;
 }): string {
@@ -79,13 +76,7 @@ function renderAuthorizePage(params: {
        <button type="submit">Approve Access</button>`
     : `${
         params.returnToUrl
-          ? `<a href="/?returnTo=${encodeURIComponent(params.returnToUrl)}" style="display:block;text-align:center;text-decoration:none;margin:16px 0 8px;padding:12px;border-radius:10px;background:#f97316;color:#09090b;font-weight:700;font-size:0.95rem;">Sign In with PainCave (Google / Passkey / Email)</a>`
-          : ""
-      }${
-        params.hasLegacyPassword
-          ? `<label for="password">Or approve with Admin Password</label>
-             <input id="password" name="password" type="password" autocomplete="current-password" required />
-             <button type="submit" style="background:#27272a;color:#f4f4f5;border:1px solid #3f3f46;">Approve with Password</button>`
+          ? `<a href="/?returnTo=${encodeURIComponent(params.returnToUrl)}" style="display:block;text-align:center;text-decoration:none;margin:16px 0 8px;padding:12px;border-radius:10px;background:#f97316;color:#09090b;font-weight:700;font-size:0.95rem;">Sign In with Google</a>`
           : ""
       }`;
 
@@ -163,7 +154,7 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
 
   // RFC 7591 Dynamic Client Registration (for Claude Mobile / ChatGPT Mobile)
   router.post("/oauth/register", async (c) => {
-    if (!c.env.UI_ADMIN_PASSWORD_HASH && !resolveBetterAuthSecret(c.env)) {
+    if (!resolveBetterAuthSecret(c.env)) {
       return c.json({ error: "server_error", error_description: "OAuth not configured" }, 503);
     }
 
@@ -207,7 +198,7 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
   });
 
   router.get("/oauth/authorize", async (c) => {
-    if (!c.env.UI_ADMIN_PASSWORD_HASH && !resolveBetterAuthSecret(c.env)) {
+    if (!resolveBetterAuthSecret(c.env)) {
       return c.text("Authentication not configured", 503);
     }
 
@@ -251,15 +242,13 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
         codeChallengeMethod,
         scope,
         signedInEmail: sessionUser?.email ?? null,
-        hasLegacyPassword: Boolean(c.env.UI_ADMIN_PASSWORD_HASH),
         returnToUrl,
       })
     );
   });
 
   router.post("/oauth/authorize", async (c) => {
-    const expectedHash = c.env.UI_ADMIN_PASSWORD_HASH;
-    if (!expectedHash && !resolveBetterAuthSecret(c.env)) {
+    if (!resolveBetterAuthSecret(c.env)) {
       return c.json({ error: "server_error" }, 503);
     }
 
@@ -271,7 +260,6 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
     const codeChallengeMethod =
       typeof form["code_challenge_method"] === "string" ? form["code_challenge_method"] : "";
     const scope = typeof form["scope"] === "string" ? form["scope"] : "mcp:tools";
-    const password = typeof form["password"] === "string" ? form["password"] : "";
 
     const client = await c.env.DB.prepare(
       "SELECT client_id, client_name, redirect_uris_json FROM mcp_oauth_clients WHERE client_id = ?"
@@ -288,10 +276,8 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
     }
 
     const sessionUser = await getBetterAuthSessionUser(c.env, c.req.raw);
-    const passwordValid =
-      expectedHash && password ? await verifyPasswordPbkdf2(password, expectedHash) : false;
 
-    if (!sessionUser && !passwordValid) {
+    if (!sessionUser) {
       return c.html(
         renderAuthorizePage({
           clientName: client.client_name,
@@ -302,16 +288,13 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
           codeChallengeMethod,
           scope,
           signedInEmail: null,
-          hasLegacyPassword: Boolean(expectedHash),
-          error: "Invalid credentials. Please sign in or check your admin password.",
+          error: "Please sign in with Google before approving access.",
         }),
         401
       );
     }
 
-    const authorizedUserId = sessionUser
-      ? sessionUser.id
-      : await resolvePrimaryOwnerUserId(c.env.DB);
+    const authorizedUserId = sessionUser.id;
     const rawCode = generateSecureToken(32);
     const codeHash = await sha256Hex(rawCode);
     const nowSec = Math.floor(Date.now() / 1000);

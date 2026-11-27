@@ -50,17 +50,7 @@ npx wrangler d1 migrations apply paincave-db --remote
 Generate strong random secrets locally (do **not** commit them or save them in tracked files):
 
 ```bash
-# 1. Generate UI admin PBKDF2 password hash (replace YOUR_ADMIN_PASSWORD in your shell)
-read -rs -p "Admin password: " PC_PW && echo ""
-node -e '
-const crypto = require("node:crypto");
-const salt = crypto.randomBytes(16).toString("hex");
-const dk = crypto.pbkdf2Sync(process.argv[1], Buffer.from(salt, "hex"), 100000, 32, "sha256").toString("hex");
-console.log(`pbkdf2_sha256$100000$${salt}$${dk}`);
-' "$PC_PW"
-unset PC_PW
-
-# 2. Generate 256-bit random tokens for sessions, trainer bridge, and static MCP CLI access
+# Generate 256-bit random tokens for sessions, trainer bridge, and static MCP CLI access
 openssl rand -hex 32   # use as SESSION_SIGNING_SECRET
 openssl rand -hex 32   # use as BRIDGE_DEVICE_TOKEN (save for bridge.env too)
 openssl rand -hex 32   # use as MCP_BEARER_TOKEN
@@ -70,11 +60,28 @@ Upload the required secrets to Cloudflare Workers:
 
 ```bash
 cd apps/worker
-npx wrangler secret put UI_ADMIN_PASSWORD_HASH
 npx wrangler secret put SESSION_SIGNING_SECRET
 npx wrangler secret put BRIDGE_DEVICE_TOKEN
 npx wrangler secret put MCP_BEARER_TOKEN
 ```
+
+### Google Sign-In Secrets
+
+Create a Google OAuth 2.0 Web application and add this authorized redirect URI:
+
+```text
+https://<your-worker-subdomain>.workers.dev/api/auth/callback/google
+```
+
+Then add the OAuth credentials as Worker secrets:
+
+```bash
+npx wrangler secret put GOOGLE_CLIENT_ID
+npx wrangler secret put GOOGLE_CLIENT_SECRET
+npx wrangler secret put PUBLIC_APP_URL
+```
+
+Set `PUBLIC_APP_URL` to `https://<your-worker-subdomain>.workers.dev` when prompted.
 
 ### Optional: Strava Automatic Upload Secrets
 
@@ -103,7 +110,7 @@ npx wrangler deploy
 Once deployed:
 
 1. Open `https://<your-worker-subdomain>.workers.dev` in Chrome.
-2. Sign in with your admin password.
+2. Sign in with Google.
 3. Open **Settings**:
    - Save your baseline **FTP / LTHR / HRmax / Weight** snapshot.
    - If Strava secrets were configured, click **Connect Strava** to complete the OAuth consent flow.
@@ -136,7 +143,7 @@ https://<your-worker-subdomain>.workers.dev/mcp
 1. Open Custom Connectors / Remote MCP Settings in your AI app.
 2. Add connector URL: `https://<your-worker-subdomain>.workers.dev/mcp`.
 3. The client automatically discovers `/.well-known/oauth-protected-resource`, registers via `POST /oauth/register`, and opens the PainCave OAuth approval page.
-4. Approve access using your PainCave UI admin password. Issued access & refresh tokens are stored SHA-256 hashed in D1 with automatic refresh rotation.
+4. Sign in with Google and approve access. Issued access & refresh tokens are stored SHA-256 hashed in D1 with automatic refresh rotation.
 
 ### Option B: CLI / Desktop MCP Clients (Static Bearer Token)
 

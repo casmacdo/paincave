@@ -1,5 +1,4 @@
 export interface WorkerSecrets {
-  UI_ADMIN_PASSWORD_HASH?: string;
   SESSION_SIGNING_SECRET?: string;
   BETTER_AUTH_SECRET?: string;
   ALLOWED_OWNER_EMAIL?: string;

@@ -1,8 +1,7 @@
 import { useState, type FormEvent } from "react";
-import { api, type AuthState } from "../lib/api.js";
+import type { AuthState } from "../lib/api.js";
 import { authClient } from "../lib/auth-client.js";
 import { useI18n } from "../lib/i18n.js";
-import { useTheme } from "../lib/theme.js";
 
 interface AuthScreenProps {
   authState: AuthState;
@@ -26,78 +25,21 @@ function getInitialAuthError(): string | null {
   const description = params.get("error_description");
   if (description) return description;
   if (code === "signup_disabled" || code === "unable_to_create_user") {
-    return "Sign-in blocked: this PainCave instance is locked to its single owner account.";
+    return "Sign-in blocked: this PainCave instance is locked to its allowlist or owner account.";
   }
   return `Sign-in failed (${code.replace(/_/g, " ")}).`;
 }
 
-export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
+export function AuthScreen({ authState }: AuthScreenProps) {
   const { locale, setLocale, t } = useI18n();
-  const { theme, toggleTheme } = useTheme();
-  const providers = authState.providers ?? {
-    email_password: true,
-    passkey: true,
-    google: false,
-    legacy_password: true,
-  };
+  const providers = authState.providers ?? { google: false };
   const hasOwner = authState.has_owner ?? false;
-  const allowRegistration = authState.allow_registration ?? !hasOwner;
-  const [mode, setMode] = useState<"sign_in" | "claim_owner">(
-    hasOwner ? "sign_in" : "claim_owner"
-  );
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [legacyPassword, setLegacyPassword] = useState("");
-  const [showLegacyFallback, setShowLegacyFallback] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(() => getInitialAuthError());
-
   const returnTo = getSafeReturnTo();
 
-  const finishAuth = async () => {
-    if (returnTo !== "/" && typeof window !== "undefined") {
-      window.location.assign(returnTo);
-      return;
-    }
-    await onAuthenticated();
-  };
-
-  const handleEmailSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    try {
-      if (mode === "claim_owner" && allowRegistration) {
-        const res = await authClient.signUp.email({
-          name: name.trim() || "Athlete",
-          email: email.trim(),
-          password,
-        });
-        if (res.error) {
-          setError(res.error.message ?? "Could not create account");
-          return;
-        }
-      } else {
-        const res = await authClient.signIn.email({
-          email: email.trim(),
-          password,
-        });
-        if (res.error) {
-          setError(res.error.message ?? "Invalid email or password");
-          return;
-        }
-      }
-      setPassword("");
-      await finishAuth();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Authentication failed");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleGoogleSignIn = async () => {
+  const handleGoogleSignIn = async (event: FormEvent) => {
+    event.preventDefault();
     setSubmitting(true);
     setError(null);
     try {
@@ -116,38 +58,6 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
     }
   };
 
-  const handlePasskeySignIn = async () => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      const res = await authClient.signIn.passkey();
-      if (res.error) {
-        setError(res.error.message ?? "Passkey sign-in failed");
-        return;
-      }
-      await finishAuth();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Passkey sign-in cancelled or failed");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleLegacySubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    try {
-      await api.login(legacyPassword);
-      setLegacyPassword("");
-      await finishAuth();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid admin password");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-4">
       <div className="w-full max-w-md space-y-5 rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
@@ -156,34 +66,24 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
             <h1 className="text-2xl font-black tracking-tight text-white">
               Pain<span className="text-orange-500">Cave</span>
             </h1>
-            <div className="flex items-center gap-1.5">
-              <div className="inline-flex rounded-lg border border-zinc-700 bg-zinc-950 p-0.5 text-[10px] font-semibold">
-                <button
-                  type="button"
-                  onClick={() => setLocale("fr-CA")}
-                  className={`rounded px-1.5 py-0.5 ${
-                    locale === "fr-CA" ? "bg-orange-500 text-zinc-950" : "text-zinc-400"
-                  }`}
-                >
-                  FR
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLocale("en")}
-                  className={`rounded px-1.5 py-0.5 ${
-                    locale === "en" ? "bg-orange-500 text-zinc-950" : "text-zinc-400"
-                  }`}
-                >
-                  EN
-                </button>
-              </div>
+            <div className="inline-flex rounded-lg border border-zinc-700 bg-zinc-950 p-0.5 text-[10px] font-semibold">
               <button
                 type="button"
-                onClick={toggleTheme}
-                title={t("theme.toggle_title")}
-                className="rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] font-semibold text-zinc-300"
+                onClick={() => setLocale("fr-CA")}
+                className={`rounded px-1.5 py-0.5 ${
+                  locale === "fr-CA" ? "bg-orange-500 text-zinc-950" : "text-zinc-400"
+                }`}
               >
-                {theme === "light" ? "☀" : "☾"}
+                FR
+              </button>
+              <button
+                type="button"
+                onClick={() => setLocale("en")}
+                className={`rounded px-1.5 py-0.5 ${
+                  locale === "en" ? "bg-orange-500 text-zinc-950" : "text-zinc-400"
+                }`}
+              >
+                EN
               </button>
             </div>
           </div>
@@ -200,8 +100,8 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
         {!hasOwner && (
           <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
             {locale === "fr-CA"
-              ? "Accès privé sur invitation : seuls les comptes autorisés peuvent s'inscrire."
-              : "Private invite-only instance: only authorized accounts can register."}
+              ? "Cette instance privée utilise Google. Le premier compte autorisé devient le propriétaire."
+              : "This private instance uses Google. The first authorized account becomes the owner."}
           </div>
         )}
 
@@ -214,157 +114,23 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
           </div>
         )}
 
-        {/* Google OAuth + Passkey Buttons */}
-        {(providers.google || (providers.passkey && hasOwner)) && (
-          <div className="space-y-2.5">
-            {providers.google && (
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={() => void handleGoogleSignIn()}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950 py-2.5 text-sm font-semibold text-white transition hover:border-zinc-500 hover:bg-zinc-800 disabled:opacity-60"
-              >
-                {t("auth.continue_google")}
-              </button>
-            )}
-            {providers.passkey && hasOwner && (
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={() => void handlePasskeySignIn()}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-orange-500/40 bg-orange-500/10 py-2.5 text-sm font-semibold text-orange-200 transition hover:bg-orange-500/20 disabled:opacity-60"
-              >
-                {t("auth.sign_in_passkey")}
-              </button>
-            )}
-            <div className="flex items-center gap-3 py-1 text-[11px] uppercase tracking-wider text-zinc-500">
-              <div className="h-px flex-1 bg-zinc-800" />
-              <span>{t("auth.or_email")}</span>
-              <div className="h-px flex-1 bg-zinc-800" />
-            </div>
-          </div>
-        )}
-
-        {/* Email & Password Form */}
-        {providers.email_password && (
-          <form onSubmit={(e) => void handleEmailSubmit(e)} className="space-y-3">
-            {allowRegistration && mode === "claim_owner" && (
-              <div>
-                <label htmlFor="auth-name" className="block text-xs font-medium text-zinc-400">
-                  {t("auth.name")}
-                </label>
-                <input
-                  id="auth-name"
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder={locale === "fr-CA" ? "Votre nom" : "Your name"}
-                  required
-                  className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-sm text-white focus:border-orange-500 focus:outline-none"
-                />
-              </div>
-            )}
-            <div>
-              <label htmlFor="auth-email" className="block text-xs font-medium text-zinc-400">
-                {t("auth.email")}
-              </label>
-              <input
-                id="auth-email"
-                type="email"
-                autoComplete="username webauthn"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="vous@exemple.com"
-                required
-                className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-sm text-white focus:border-orange-500 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label htmlFor="auth-password" className="block text-xs font-medium text-zinc-400">
-                {t("auth.password")}
-              </label>
-              <input
-                id="auth-password"
-                type="password"
-                autoComplete={mode === "claim_owner" ? "new-password" : "current-password"}
-                minLength={8}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder={
-                  mode === "claim_owner"
-                    ? locale === "fr-CA"
-                      ? "Au moins 8 caractères"
-                      : "At least 8 characters"
-                    : t("auth.password")
-                }
-                required
-                className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-sm text-white focus:border-orange-500 focus:outline-none"
-              />
-            </div>
+        {providers.google ? (
+          <form onSubmit={(event) => void handleGoogleSignIn(event)}>
             <button
               type="submit"
               disabled={submitting}
-              className="w-full rounded-xl bg-orange-500 py-3 text-sm font-bold text-zinc-950 hover:bg-orange-400 disabled:opacity-60"
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950 py-3 text-sm font-semibold text-white transition hover:border-zinc-500 hover:bg-zinc-800 disabled:opacity-60"
             >
               {submitting
                 ? t("auth.please_wait")
-                : mode === "claim_owner" && allowRegistration
-                  ? hasOwner
-                    ? locale === "fr-CA"
-                      ? "Créer un compte"
-                      : "Create Account"
-                    : t("auth.create_owner")
-                  : t("auth.sign_in")}
+                : t("auth.continue_google")}
             </button>
-
-            {allowRegistration && (
-              <button
-                type="button"
-                onClick={() => setMode(mode === "claim_owner" ? "sign_in" : "claim_owner")}
-                className="w-full text-center text-xs text-zinc-400 hover:text-zinc-200"
-              >
-                {mode === "claim_owner"
-                  ? locale === "fr-CA"
-                    ? "Déjà inscrit? Se connecter"
-                    : "Already have an account? Sign in"
-                  : locale === "fr-CA"
-                    ? "Compte invité? Créer mon compte"
-                    : "Invited user? Create an account"}
-              </button>
-            )}
           </form>
-        )}
-
-        {/* Legacy Admin Password Fallback */}
-        {providers.legacy_password && (
-          <div className="border-t border-zinc-800 pt-3">
-            <button
-              type="button"
-              onClick={() => setShowLegacyFallback((open) => !open)}
-              className="text-xs text-zinc-500 hover:text-zinc-300"
-            >
-              {showLegacyFallback ? "Hide Admin Password Fallback" : "Use Legacy Admin Password"}
-            </button>
-            {showLegacyFallback && (
-              <form onSubmit={(e) => void handleLegacySubmit(e)} className="mt-3 flex gap-2">
-                <input
-                  type="password"
-                  value={legacyPassword}
-                  onChange={(e) => setLegacyPassword(e.target.value)}
-                  placeholder="Admin Password"
-                  aria-label="Legacy Admin Password"
-                  required
-                  className="flex-1 rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white"
-                />
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-2 text-xs font-bold text-white hover:bg-zinc-700 disabled:opacity-60"
-                >
-                  Unlock
-                </button>
-              </form>
-            )}
+        ) : (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+            {locale === "fr-CA"
+              ? "La connexion Google n'est pas configurée."
+              : "Google sign-in is not configured."}
           </div>
         )}
       </div>
