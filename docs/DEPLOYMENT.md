@@ -2,7 +2,7 @@
 
 This guide takes PainCave from verified source code to production across:
 1. **Cloudflare Free Tier Hub** (Workers + D1 + R2 + Hosted PWA + Outbound Strava + Mobile OAuth 2.1 MCP)
-2. **Mobile / Web AI Coaches** (Claude Mobile/Web, ChatGPT Mobile, or CLI MCP clients)
+2. **Remote MCP Clients for Planning & Analysis** (Claude Mobile/Web, ChatGPT Mobile, Gemini, or CLI MCP clients)
 3. **Basement Linux Trainer PC** (Rust `trainer-bridge` daemon talking to Wahoo KICKR v5 & Polar H10 over BlueZ BLE)
 
 ---
@@ -110,7 +110,7 @@ Once deployed:
 
 ---
 
-## 5. Connect Mobile & Desktop AI Coaches (Remote MCP)
+## 5. Connect Remote MCP Clients for Planning & Analysis (Mobile & Desktop)
 
 PainCave exposes a stateless MCP endpoint at:
 
@@ -133,7 +133,7 @@ Pass:
 Authorization: Bearer <MCP_BEARER_TOKEN>
 ```
 
-Available coaching & telemetry tools include `get_athlete_context`, `get_fitness_overview`, `list_recent_rides`, `get_ride_detail`, `get_ride_timeseries`, `get_calendar`, `search_workouts`, `create_workout`, `update_workout`, `schedule_workout`, `move_session`, `skip_session`, `set_thresholds`, `add_coaching_note`, `archive_coaching_note`, and `upsert_training_block`.
+Available planning, analysis & telemetry tools include `get_athlete_context`, `get_fitness_overview`, `list_recent_rides`, `get_ride_detail`, `get_ride_timeseries`, `get_calendar`, `list_workouts`, `get_workout`, `create_workout`, `update_workout`, `schedule_workout`, `move_or_cancel_session`, `log_threshold_update`, `save_coaching_note`, `archive_coaching_note`, and `upsert_training_block`.
 
 ---
 

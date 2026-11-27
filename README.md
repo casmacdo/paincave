@@ -1,16 +1,16 @@
 # PainCave
 
-A single-user cycling training platform connecting a **Linux basement trainer setup** (Wahoo KICKR v5 + Polar H10) to a **Cloudflare Free Tier cloud hub** and **LLM coaching via Remote MCP**.
+A single-user cycling training platform connecting a **Linux basement trainer setup** (Wahoo KICKR v5 + Polar H10) to a **Cloudflare Free Tier cloud hub** and **Remote MCP for workout planning and ride analysis**.
 
 ## Architecture at a Glance
 
 ```text
-[LLM Coach: Claude / ChatGPT / Antigravity]
+[Remote MCP Clients: Planning & Analysis (Claude / ChatGPT / Gemini)]
        │  Stateless Remote MCP (OAuth 2.1 / Bearer)
        ▼
 [Cloudflare Worker — $0/mo]
   ├── Hono REST API + Stateless MCP Server (/mcp)
-  ├── D1 (SQLite): athlete thresholds, workouts, calendar, rides, intervals, peaks, PMC, coaching memory
+  ├── D1 (SQLite): athlete thresholds, workouts, calendar, rides, intervals, peaks, PMC, training notes
   ├── R2: raw .fit files & exported .zwo/.erg files
   ├── Static Assets: React + Vite + Tailwind + uPlot PWA (auto-reloads when idle)
   └── Outbound Strava .fit upload
@@ -30,7 +30,7 @@ A single-user cycling training platform connecting a **Linux basement trainer se
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — System design, WebSocket/HTTP protocols, auth, hardware & failure modes
 - [docs/DATA_MODEL.md](docs/DATA_MODEL.md) — D1 SQLite schema, R2 layout, JSON workout spec, and physiological math
-- [docs/MCP_SPEC.md](docs/MCP_SPEC.md) — MCP tools, Zod schemas, physiological guardrails, and coaching memory
+- [docs/MCP_SPEC.md](docs/MCP_SPEC.md) — MCP tools, Zod schemas, physiological guardrails, and training notes
 - [docs/PLAN.md](docs/PLAN.md) — Phased implementation roadmap (M0–M7)
 - [automation/LOOP_ARCHITECTURE.md](automation/LOOP_ARCHITECTURE.md) — Autonomous build, simulation, and verification loops
 

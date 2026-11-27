@@ -269,7 +269,7 @@ export function createAthleteRoutes(): Hono<HonoAppContext> {
     const body: unknown = await c.req.json().catch(() => null);
     const parsed = CoachingNoteInputSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "Invalid coaching note", issues: parsed.error.issues }, 400);
+      return c.json({ error: "Invalid training note", issues: parsed.error.issues }, 400);
     }
     const id = crypto.randomUUID();
     await c.env.DB.prepare(
@@ -292,7 +292,7 @@ export function createAthleteRoutes(): Hono<HonoAppContext> {
       .bind(id)
       .run();
     if ((res.meta.changes ?? 0) === 0) {
-      return c.json({ error: "Coaching note not found" }, 404);
+      return c.json({ error: "Training note not found" }, 404);
     }
     return c.json({ ok: true });
   });

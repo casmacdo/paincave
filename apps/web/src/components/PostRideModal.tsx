@@ -29,7 +29,7 @@ export function PostRideModal({
       <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
         <h2 className="text-xl font-bold text-white">Save Ride: {workoutName}</h2>
         <p className="mt-1 text-sm text-zinc-400">
-          Recorded {mins}m {secs}s — log how the legs felt for your AI coach.
+          Recorded {mins}m {secs}s — log how the legs felt for post-ride analysis.
         </p>
 
         <div className="mt-5 space-y-4">
@@ -70,7 +70,7 @@ export function PostRideModal({
 
           <div>
             <label htmlFor="ride-notes" className="block text-sm font-medium text-zinc-300">
-              Coach Notes
+              Ride Notes
             </label>
             <textarea
               id="ride-notes"

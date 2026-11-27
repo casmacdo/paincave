@@ -8,7 +8,7 @@ Authentication:
 
 ---
 
-## 1. Read Tools (Coaching Context & Analysis)
+## 1. Read Tools (Training Context & Analysis)
 
 ### `get_athlete_context`
 Returns complete baseline context in one call:

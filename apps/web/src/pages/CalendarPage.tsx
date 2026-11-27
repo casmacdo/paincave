@@ -113,7 +113,7 @@ export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
             </h2>
             {sessions.length === 0 ? (
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 text-sm text-zinc-500">
-                No planned sessions in this window. Ask your AI coach via MCP to schedule your week.
+                No planned sessions in this window. Use Remote MCP to plan and schedule workouts for your week.
               </div>
             ) : (
               sessions.map((s) => (

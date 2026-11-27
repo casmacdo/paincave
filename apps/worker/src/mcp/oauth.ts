@@ -83,8 +83,8 @@ function renderAuthorizePage(params: {
 </head>
 <body>
   <div class="card">
-    <h1>Authorize PainCave Coach</h1>
-    <p><strong>${escapeHtml(params.clientName)}</strong> requests access to your training data, workouts, and calendar (<code>${escapeHtml(params.scope)}</code>).</p>
+    <h1>Authorize PainCave MCP</h1>
+    <p><strong>${escapeHtml(params.clientName)}</strong> requests access to your training data, ride analysis, workouts, and calendar (<code>${escapeHtml(params.scope)}</code>).</p>
     ${errHtml}
     <form method="POST" action="/oauth/authorize">
       <input type="hidden" name="client_id" value="${escapeHtml(params.clientId)}" />

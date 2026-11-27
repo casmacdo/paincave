@@ -4,7 +4,7 @@ import { RidePage } from "../../pages/RidePage.js";
 import type { BridgeClientSnapshot } from "../../lib/bridge-client.js";
 
 describe("RidePage HUD & Controls", () => {
-  it("renders live telemetry, coaching cue, dispatches ERG bias commands, and submits PostRideModal", () => {
+  it("renders live telemetry, interval cue, dispatches ERG bias commands, and submits PostRideModal", () => {
     const sendCommand = vi.fn().mockReturnValue(true);
     const snapshot: BridgeClientSnapshot = {
       connected: true,
@@ -56,7 +56,7 @@ describe("RidePage HUD & Controls", () => {
     render(<RidePage snapshot={snapshot} ftpWatts={260} sendCommand={sendCommand} />);
 
     expect(screen.getByText("4x8m Threshold")).toBeTruthy();
-    expect(screen.getByText("Coach Cue: Hold steady 90 RPM")).toBeTruthy();
+    expect(screen.getByText("Cue: Hold steady 90 RPM")).toBeTruthy();
     expect(screen.getByText("261")).toBeTruthy();
     expect(screen.getByText("165")).toBeTruthy();
 

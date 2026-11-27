@@ -265,7 +265,7 @@ export function registerWriteTools(registry: McpToolRegistry): void {
     "save_coaching_note",
     {
       description:
-        "Stores a durable coaching observation (injury, preference, training response, equipment, schedule) for future sessions.",
+        "Stores a durable training note (injury, preference, training response, equipment, schedule) for future planning and analysis.",
       inputSchema: CoachingNoteInputSchema,
     },
     async ({ category, content }, env) => {
@@ -285,7 +285,7 @@ export function registerWriteTools(registry: McpToolRegistry): void {
   registry.register(
     "archive_coaching_note",
     {
-      description: "Archives an outdated coaching note so it no longer appears in active context.",
+      description: "Archives an outdated training note so it no longer appears in active context.",
       inputSchema: z.object({
         note_id: z.string().min(1),
       }),
@@ -296,7 +296,7 @@ export function registerWriteTools(registry: McpToolRegistry): void {
       )
         .bind(note_id)
         .run();
-      if ((res.meta.changes ?? 0) === 0) throw new Error(`Coaching note not found: ${note_id}`);
+      if ((res.meta.changes ?? 0) === 0) throw new Error(`Training note not found: ${note_id}`);
       return { ok: true, note_id };
     }
   );

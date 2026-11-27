@@ -162,11 +162,11 @@ export function SettingsPage({
       </div>
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-        <h2 className="text-lg font-bold text-white">Remote MCP Coach (Mobile & Desktop)</h2>
+        <h2 className="text-lg font-bold text-white">Remote MCP — Planning &amp; Analysis (Mobile &amp; Desktop)</h2>
         <p className="mt-1 text-sm text-zinc-400">
-          Add this URL as a custom Remote MCP connector in Claude Mobile/Web or ChatGPT (uses OAuth
-          2.1 + PKCE with your PainCave admin password), or authenticate CLI clients using your{" "}
-          <code>MCP_BEARER_TOKEN</code>.
+          Add this URL as a Remote MCP connector for workout planning, ride analysis, and training
+          data access in Claude, ChatGPT, or Gemini (uses OAuth 2.1 + PKCE with your PainCave admin
+          password), or authenticate CLI clients using your <code>MCP_BEARER_TOKEN</code>.
         </p>
         <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs text-orange-300">
           {mcpUrl}

@@ -95,10 +95,10 @@ export function RidePage({ snapshot, ftpWatts, sendCommand }: RidePageProps) {
         </div>
       </div>
 
-      {/* Coaching Cue Banner */}
+      {/* Interval Cue Banner */}
       {tel?.text_cue && (
         <div className="rounded-xl border border-orange-500/40 bg-orange-500/10 px-4 py-3 text-base font-medium text-orange-200">
-          Coach Cue: {tel.text_cue}
+          Cue: {tel.text_cue}
         </div>
       )}
 

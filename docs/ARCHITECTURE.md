@@ -2,7 +2,7 @@
 
 ## 1. Design Goals & Constraints
 
-1. **Zero basement development & zero LLM secrets in the basement:** All software development, deploys, and LLM coaching occur from the user's main computer (or any device). The basement Linux PC only runs a set-and-forget Rust daemon (`trainer-bridge`) and opens the Cloudflare-hosted Chrome PWA.
+1. **Zero basement development & zero LLM secrets in the basement:** All software development, deploys, and Remote MCP planning/analysis occur from the user's main computer (or any device). The basement Linux PC only runs a set-and-forget Rust daemon (`trainer-bridge`) and opens the Cloudflare-hosted Chrome PWA.
 2. **Crash-proof, throttle-proof workout execution:** Watching YouTube/Netflix in the foreground on Linux throttles background Chrome tabs. Therefore, **`trainer-bridge` owns the 1Hz workout clock, trainer control loop, and crash-safe local recording**. The web UI is a stateless live display & remote control.
 3. **$0/month Cloudflare hosting:** Everything on the cloud side runs within Cloudflare's Free Tier (Workers 100k req/day & 10ms CPU/request, D1 500 MB / 5M reads/day, R2 10 GB / $0 egress, Static Assets).
 4. **Hardware fidelity for KICKR v5 + Polar H10:** Primary transport is Rust `btleplug` + `ftms` (BLE FTMS `0x1826` + BLE HR `0x180D`). An identical `TrainerTransport` trait enables `MockTransport` (for autonomous E2E testing) and an optional Phase-2 `AntTransport` (ANT+ FE-C + HR).
@@ -14,7 +14,7 @@
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
-│ LLM Coach (Claude / ChatGPT / Antigravity / Cursor)                  │
+│ Remote MCP Clients (Planning & Analysis — Claude / ChatGPT / Gemini) │
 │   └─ Remote MCP over Streamable HTTP (/mcp, OAuth 2.1 or Bearer)     │
 └──────────────────────────────────┬───────────────────────────────────┘
                                    │ HTTPS
@@ -68,7 +68,7 @@
 ### 3.2 `apps/worker` (Cloudflare Worker)
 - **Routing:**
   - `/api/auth/*` — Login, logout, session check (HttpOnly `SameSite=Lax` cookie signed with HMAC-SHA256 via Web Crypto).
-  - `/api/athlete/*` — Profile, threshold history, training blocks, coaching notes.
+  - `/api/athlete/*` — Profile, threshold history, training blocks, training notes.
   - `/api/workouts/*` — CRUD for canonical workout JSON + `/api/workouts/:id/export.zwo` & `.erg`.
   - `/api/calendar/*` — Planned sessions CRUD.
   - `/api/rides/*` — Idempotent ride ingestion (`POST /api/rides` accepting multipart `.fit` + precomputed summary JSON, authenticated via session cookie or `X-Bridge-Token`), manual `.fit` upload, ride listing, detail, interval breakdown, downsampled timeseries, and post-ride RPE/feel/notes updates.
@@ -102,7 +102,7 @@
 
 ### 3.4 `apps/web` (React + Vite + Tailwind + uPlot PWA)
 - **Views:**
-  1. **Ride (Live Player):** Big readable Power (3s + instant), Target Power, HR, Cadence, Interval timer, Coaching Cue banner, live scrolling `uPlot` chart overlaid on the workout profile, ERG +/- bias buttons, Pause/Skip/Finish, and 10-second post-ride RPE/Feel/Notes modal.
+  1. **Ride (Live Player):** Big readable Power (3s + instant), Target Power, HR, Cadence, Interval timer, Interval Cue banner, live scrolling `uPlot` chart overlaid on the workout profile, ERG +/- bias buttons, Pause/Skip/Finish, and 10-second post-ride RPE/Feel/Notes modal.
   2. **Calendar & Workouts:** Weekly calendar showing planned vs. completed sessions, workout library, workout detail/preview chart, `.zwo`/`.erg` download, "Load on Trainer" one-click handoff.
   3. **Analytics:** PMC (`CTL`/`ATL`/`TSB`) chart, 42d/90d/All-time MMP curve, recent rides table, per-ride interval compliance breakdown, manual `.fit` upload dropzone.
   4. **Settings:** Athlete thresholds (FTP/LTHR/HRmax/weight), Bridge connection URL (`ws://127.0.0.1:8765/ws`) & live sensor status, Strava connect/status, MCP endpoint info.

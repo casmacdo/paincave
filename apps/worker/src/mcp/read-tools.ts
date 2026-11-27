@@ -35,7 +35,7 @@ export function registerReadTools(registry: McpToolRegistry): void {
     "get_athlete_context",
     {
       description:
-        "Returns athlete profile, current and historical thresholds (FTP, LTHR, HRmax, CP, W', weight), active training blocks with schedule constraints, and active coaching notes.",
+        "Returns athlete profile, current and historical thresholds (FTP, LTHR, HRmax, CP, W', weight), active training blocks with schedule constraints, and active training notes.",
       inputSchema: z.object({}),
     },
     async (_args, env) => {

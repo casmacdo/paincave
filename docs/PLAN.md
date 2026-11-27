@@ -32,7 +32,7 @@ Machine-readable source of truth: [automation/tasks.json](../automation/tasks.js
 
 ## Milestone M5 — React + Vite + uPlot Chrome PWA (`apps/web`)
 - **M5-01:** App shell, login flow, PWA manifest + Service Worker offline cache + idle `/api/version` auto-reload controller, and `BridgeClient` WebSocket hook with auto-reconnect.
-- **M5-02:** Live Workout Player view (big telemetry cards, workout profile + live 1Hz `uPlot` graph, interval progress + LLM coaching cue banner, Start/Pause/Skip/ERG bias +/- controls, post-ride 10-second RPE/Feel/Notes modal).
+- **M5-02:** Live Workout Player view (big telemetry cards, workout profile + live 1Hz `uPlot` graph, interval progress + interval cue banner, Start/Pause/Skip/ERG bias +/- controls, post-ride 10-second RPE/Feel/Notes modal).
 - **M5-03:** Calendar, Workout Library (with preview chart & one-click "Load on Trainer"), Analytics (PMC + MMP curves + per-interval compliance table + manual `.fit` upload dropzone), and Settings view.
 
 ## Milestone M6 — Real Hardware & Strava Integration
