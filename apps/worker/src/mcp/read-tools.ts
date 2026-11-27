@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { computeDailyPmc, downsampleRecords, parseFitRecords } from "@paincave/shared";
-import type { McpToolRegistry } from "./protocol.js";
+import { optionalCoercedInt, optionalEnum, type McpToolRegistry } from "./protocol.js";
 import { getFitnessOverview } from "../lib/fitness-service.js";
 import { todayUtcDay } from "../lib/pmc-store.js";
 import type { RideRow } from "../lib/rides-service.js";
@@ -73,7 +73,7 @@ export function registerReadTools(registry: McpToolRegistry): void {
       description:
         "Returns current CTL/ATL/TSB/7d ramp rate, daily PMC series, weekly hours/TSS/zone rollups, and rolling 42d/90d MMP peak power curves + CP/W' estimate.",
       inputSchema: z.object({
-        days: z.coerce.number().int().min(7).max(365).optional(),
+        days: optionalCoercedInt(7, 365),
       }),
     },
     async ({ days }, env) => {
@@ -87,21 +87,24 @@ export function registerReadTools(registry: McpToolRegistry): void {
       description:
         "Lists recent completed rides with compact physiological summaries (NP, IF, TSS, avg/max HR, EF, Pw:HR decoupling, time >90% HRmax, compliance %, RPE/feel/notes, quality flags).",
       inputSchema: z.object({
-        days: z.number().int().min(1).max(365).default(28),
-        limit: z.number().int().min(1).max(100).default(20),
-        source: z.enum(["all", "indoor_bridge", "manual_fit", "external_sync"]).default("all"),
+        days: optionalCoercedInt(1, 365),
+        limit: optionalCoercedInt(1, 100),
+        source: optionalEnum(["all", "indoor_bridge", "manual_fit", "external_sync"]),
       }),
     },
     async ({ days, limit, source }, env) => {
-      const sinceDay = shiftDay(todayUtcDay(), -(days - 1));
+      const effectiveDays = days ?? 28;
+      const effectiveLimit = limit ?? 20;
+      const effectiveSource = source ?? "all";
+      const sinceDay = shiftDay(todayUtcDay(), -(effectiveDays - 1));
       const sql =
-        source === "all"
+        effectiveSource === "all"
           ? "SELECT * FROM rides WHERE ride_day >= ? ORDER BY started_at DESC LIMIT ?"
           : "SELECT * FROM rides WHERE ride_day >= ? AND source = ? ORDER BY started_at DESC LIMIT ?";
       const stmt =
-        source === "all"
-          ? env.DB.prepare(sql).bind(sinceDay, limit)
-          : env.DB.prepare(sql).bind(sinceDay, source, limit);
+        effectiveSource === "all"
+          ? env.DB.prepare(sql).bind(sinceDay, effectiveLimit)
+          : env.DB.prepare(sql).bind(sinceDay, effectiveSource, effectiveLimit);
 
       const { results } = await stmt.all<RideRow>();
       return {
@@ -199,10 +202,11 @@ export function registerReadTools(registry: McpToolRegistry): void {
         "Drill-down tool that decodes the stored .fit file from R2 and returns downsampled time-series points (power, HR, cadence, speed) at the requested bucket resolution.",
       inputSchema: z.object({
         ride_uuid: z.string().uuid(),
-        bucket_seconds: z.number().int().min(5).max(300).default(30),
+        bucket_seconds: optionalCoercedInt(5, 300),
       }),
     },
     async ({ ride_uuid, bucket_seconds }, env) => {
+      const effectiveBucketSeconds = bucket_seconds ?? 30;
       const ride = await env.DB.prepare(
         "SELECT ride_uuid, name, r2_fit_key FROM rides WHERE ride_uuid = ?"
       )
@@ -220,12 +224,12 @@ export function registerReadTools(registry: McpToolRegistry): void {
 
       const bytes = new Uint8Array(await obj.arrayBuffer());
       const parsed = parseFitRecords(bytes);
-      const points = downsampleRecords(parsed.samples, bucket_seconds);
+      const points = downsampleRecords(parsed.samples, effectiveBucketSeconds);
 
       return {
         ride_uuid: ride.ride_uuid,
         name: ride.name,
-        bucket_seconds,
+        bucket_seconds: effectiveBucketSeconds,
         raw_samples: parsed.samples.length,
         points,
       };
@@ -321,10 +325,11 @@ export function registerReadTools(registry: McpToolRegistry): void {
       inputSchema: z.object({
         category: z.string().optional(),
         query: z.string().optional(),
-        limit: z.number().int().min(1).max(100).default(25),
+        limit: optionalCoercedInt(1, 100),
       }),
     },
     async ({ category, query, limit }, env) => {
+      const effectiveLimit = limit ?? 25;
       const clauses = ["archived = 0"];
       const binds: (string | number)[] = [];
       if (category) {
@@ -335,7 +340,7 @@ export function registerReadTools(registry: McpToolRegistry): void {
         clauses.push("(name LIKE ? OR description LIKE ?)");
         binds.push(`%${query}%`, `%${query}%`);
       }
-      binds.push(limit);
+      binds.push(effectiveLimit);
 
       const sql = `SELECT id, name, description, category, duration_s, predicted_np, predicted_if, predicted_tss, version, created_by, updated_at
                    FROM workouts WHERE ${clauses.join(" AND ")} ORDER BY updated_at DESC LIMIT ?`;

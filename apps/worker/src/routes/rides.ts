@@ -172,7 +172,6 @@ export function createRideRoutes(): Hono<HonoAppContext> {
       return c.json({ error: "Ride not found" }, 404);
     }
 
-    await c.env.RIDES_BUCKET.delete(ride.r2_fit_key);
     await c.env.DB.batch([
       c.env.DB.prepare(
         `UPDATE planned_sessions
@@ -183,6 +182,7 @@ export function createRideRoutes(): Hono<HonoAppContext> {
       ).bind(uuid),
       c.env.DB.prepare("DELETE FROM rides WHERE ride_uuid = ?").bind(uuid),
     ]);
+    await c.env.RIDES_BUCKET.delete(ride.r2_fit_key);
     await recomputePmcFromDay(c.env.DB, ride.ride_day);
 
     return c.json({ ok: true });

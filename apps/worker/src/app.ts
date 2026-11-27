@@ -71,6 +71,7 @@ export function createApp(): Hono<HonoAppContext> {
     if (
       c.req.path.startsWith("/api/") ||
       c.req.path === "/mcp" ||
+      c.req.path.startsWith("/mcp/") ||
       c.req.path.startsWith("/oauth/") ||
       c.req.path.startsWith("/.well-known/")
     ) {

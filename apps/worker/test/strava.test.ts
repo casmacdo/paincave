@@ -272,6 +272,22 @@ describe("Strava Outbound OAuth & Background FIT Upload", () => {
     }
   });
 
+  it("returns 500 if PUBLIC_APP_URL is malformed", async () => {
+    const cookie = await loginCookie();
+    const previousPublicAppUrl = testEnv.PUBLIC_APP_URL;
+    testEnv.PUBLIC_APP_URL = "not-a-valid-url";
+
+    try {
+      const connectRes = await exports.default.fetch(
+        "https://paincave.test/api/strava/connect",
+        { headers: { Cookie: cookie }, redirect: "manual" }
+      );
+      expect(connectRes.status).toBe(500);
+    } finally {
+      testEnv.PUBLIC_APP_URL = previousPublicAppUrl;
+    }
+  });
+
   it("allows the trainer bridge to start Strava OAuth", async () => {
     const res = await exports.default.fetch(
       "https://paincave.test/api/strava/connect?mode=json",

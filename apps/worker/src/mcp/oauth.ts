@@ -105,14 +105,23 @@ function renderAuthorizePage(params: {
 export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
   const router = new Hono<HonoAppContext>();
 
-  router.get("/.well-known/oauth-protected-resource", (c) => {
-    const origin = new URL(c.req.url).origin;
-    return c.json({
+  const protectedResourceMetadata = (url: string) => {
+    const origin = new URL(url).origin;
+    return {
       resource: `${origin}/mcp`,
       authorization_servers: [origin],
       bearer_methods_supported: ["header"],
       scopes_supported: ["mcp:tools"],
-    });
+    };
+  };
+
+  router.get("/.well-known/oauth-protected-resource", (c) => {
+    return c.json(protectedResourceMetadata(c.req.url));
+  });
+
+  // RFC 9728 path-suffixed discovery probed by MCP 2025-06-18 clients
+  router.get("/.well-known/oauth-protected-resource/mcp", (c) => {
+    return c.json(protectedResourceMetadata(c.req.url));
   });
 
   router.get("/.well-known/oauth-authorization-server", (c) => {

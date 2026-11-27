@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { WorkoutSpecSchema, computeDailyPmc } from "@paincave/shared";
-import type { McpToolRegistry } from "./protocol.js";
+import { optionalCoercedBoolean, type McpToolRegistry } from "./protocol.js";
 import { saveValidatedWorkout, scheduleWorkoutSession } from "../lib/workouts-service.js";
 import { todayUtcDay } from "../lib/pmc-store.js";
 import {
@@ -27,14 +27,14 @@ export function registerWriteTools(registry: McpToolRegistry): void {
         "Validates a canonical WorkoutSpec JSON against hard physiological guardrails, computes deterministic duration/NP/IF/TSS/zones, and persists it (unless dry_run=true).",
       inputSchema: z.object({
         spec: WorkoutSpecSchema,
-        dry_run: z.boolean().default(false),
+        dry_run: optionalCoercedBoolean(),
       }),
     },
     async ({ spec, dry_run }, env) => {
       const res = await saveValidatedWorkout(env.DB, {
         rawSpec: spec,
         createdBy: "llm",
-        dryRun: dry_run,
+        dryRun: dry_run ?? false,
       });
       if (!res.ok) {
         throw new Error(`${res.error}: ${(res.details ?? []).join("; ")}`);
@@ -57,7 +57,7 @@ export function registerWriteTools(registry: McpToolRegistry): void {
       inputSchema: z.object({
         workout_id: z.string().min(1),
         spec: WorkoutSpecSchema,
-        dry_run: z.boolean().default(false),
+        dry_run: optionalCoercedBoolean(),
       }),
     },
     async ({ workout_id, spec, dry_run }, env) => {
@@ -65,7 +65,7 @@ export function registerWriteTools(registry: McpToolRegistry): void {
         workoutId: workout_id,
         rawSpec: spec,
         createdBy: "llm",
-        dryRun: dry_run,
+        dryRun: dry_run ?? false,
       });
       if (!res.ok) {
         throw new Error(`${res.error}: ${(res.details ?? []).join("; ")}`);
@@ -89,7 +89,7 @@ export function registerWriteTools(registry: McpToolRegistry): void {
         scheduled_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         workout_id: z.string().min(1),
         coach_rationale: z.string().max(1000).optional(),
-        replace_existing: z.boolean().default(false),
+        replace_existing: optionalCoercedBoolean(),
       }),
     },
     async ({ scheduled_date, workout_id, coach_rationale, replace_existing }, env) => {
@@ -97,7 +97,7 @@ export function registerWriteTools(registry: McpToolRegistry): void {
         scheduledDate: scheduled_date,
         workoutId: workout_id,
         coachRationale: coach_rationale,
-        replaceExisting: replace_existing,
+        replaceExisting: replace_existing ?? false,
       });
       if (!res.ok) {
         throw new Error(res.error);

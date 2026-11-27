@@ -22,6 +22,45 @@ const SUPPORTED_PROTOCOL_VERSIONS = new Set([
   "2025-06-18",
 ]);
 
+/**
+ * Optional integer input helper for LLM tool callers (e.g. Gemini) that may
+ * send stringified numbers, empty strings, or null for optional arguments.
+ */
+export function optionalCoercedInt(min: number, max: number) {
+  return z.preprocess(
+    (value) => {
+      if (value === null || value === "") return undefined;
+      if (typeof value === "string" && /^-?\d+$/.test(value.trim())) {
+        return Number(value.trim());
+      }
+      return value;
+    },
+    z.number().int().min(min).max(max).optional()
+  );
+}
+
+export function optionalCoercedBoolean() {
+  return z.preprocess(
+    (value) => {
+      if (value === null || value === "") return undefined;
+      if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === "true") return true;
+        if (normalized === "false") return false;
+      }
+      return value;
+    },
+    z.boolean().optional()
+  );
+}
+
+export function optionalEnum<const T extends readonly [string, ...string[]]>(values: T) {
+  return z.preprocess(
+    (value) => (value === null || value === "" ? undefined : value),
+    z.enum(values).optional()
+  );
+}
+
 export class McpToolRegistry {
   private readonly tools = new Map<string, McpToolDefinition>();
 

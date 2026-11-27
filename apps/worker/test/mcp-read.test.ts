@@ -176,10 +176,33 @@ describe("Stateless Remote MCP Server — Read Tools", () => {
     expect(fitStringDays.isError).toBe(false);
     expect(fitStringDays.structuredContent.current_pmc.ctl).toBeGreaterThan(0);
 
+    const fitNullDays = await mcpRpc<{
+      structuredContent: { current_pmc: { ctl: number } };
+      isError: boolean;
+    }>("tools/call", { name: "get_fitness_overview", arguments: { days: null } });
+    expect(fitNullDays.isError).toBe(false);
+    expect(fitNullDays.structuredContent.current_pmc.ctl).toBeGreaterThan(0);
+
     const recentRes = await mcpRpc<{
       structuredContent: { rides: { ride_uuid: string }[] };
-    }>("tools/call", { name: "list_recent_rides", arguments: { days: 14 } });
+      isError: boolean;
+    }>("tools/call", {
+      name: "list_recent_rides",
+      arguments: { days: "14", limit: "5", source: null },
+    });
+    expect(recentRes.isError).toBe(false);
     expect(recentRes.structuredContent.rides[0]?.ride_uuid).toBe(rideUuid);
+
+    // RFC 9728 path-suffixed discovery & /mcp/* 404 JSON guard
+    const prmPathRes = await exports.default.fetch(
+      "https://paincave.test/.well-known/oauth-protected-resource/mcp"
+    );
+    expect(prmPathRes.status).toBe(200);
+    const prmPathBody = await prmPathRes.json<{ resource: string }>();
+    expect(prmPathBody.resource).toBe("https://paincave.test/mcp");
+
+    const unknownMcpRes = await exports.default.fetch("https://paincave.test/mcp/unknown");
+    expect(unknownMcpRes.status).toBe(404);
 
     const detailRes = await mcpRpc<{
       structuredContent: { intervals: unknown[]; workout: { id: string } };

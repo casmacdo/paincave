@@ -16,6 +16,23 @@ import {
 
 const STRAVA_STATE_TTL_S = 600;
 
+function resolveStravaCallbackUrl(
+  publicAppUrl: string | undefined,
+  requestUrl: string
+): string | null {
+  const trimmed = publicAppUrl?.trim();
+  const base = trimmed && trimmed.length > 0 ? trimmed : new URL(requestUrl).origin;
+  try {
+    const parsed = new URL("/api/strava/callback", base);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
 export function createStravaRoutes(): Hono<HonoAppContext> {
   const router = new Hono<HonoAppContext>();
 
@@ -38,6 +55,11 @@ export function createStravaRoutes(): Hono<HonoAppContext> {
       );
     }
 
+    const callbackUrl = resolveStravaCallbackUrl(c.env.PUBLIC_APP_URL, c.req.url);
+    if (!callbackUrl) {
+      return c.json({ error: "Invalid PUBLIC_APP_URL configuration" }, 500);
+    }
+
     const nonce = generateSecureToken(24);
     const stateHash = await sha256Hex(nonce);
     const nowS = Math.floor(Date.now() / 1000);
@@ -48,11 +70,6 @@ export function createStravaRoutes(): Hono<HonoAppContext> {
       .bind(stateHash, nowS + STRAVA_STATE_TTL_S)
       .run();
 
-    const publicAppUrl = c.env.PUBLIC_APP_URL?.trim();
-    const callbackUrl = new URL(
-      "/api/strava/callback",
-      publicAppUrl || new URL(c.req.url).origin
-    ).toString();
     const authorizeUrl = buildStravaAuthorizeUrl(c.env, callbackUrl, nonce);
 
     if (c.req.query("mode") === "json") {
