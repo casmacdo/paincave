@@ -1,20 +1,37 @@
 """Deploy the latest bridge after edits settle, including uncommitted changes."""
 
 import hashlib
+import os
 import subprocess
 import time
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _iter_tree(root: Path):
+    if not root.exists():
+        return
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d != "target"]
+        for name in filenames:
+            yield Path(dirpath) / name
+
 
 def fingerprint():
-    paths = {Path("Cargo.toml"), Path("Cargo.lock")}
-    for root in (Path("crates/trainer-bridge"), Path(".cargo")):
-        paths.update(p for p in root.rglob("*") if p.is_file() and "target" not in p.parts)
-    paths.update(Path(".").glob("rust-toolchain*"))
-    paths.update([Path("scripts/deploy-basement.sh"), Path("scripts/activate-basement.sh")])
+    paths = {REPO_ROOT / "Cargo.toml", REPO_ROOT / "Cargo.lock"}
+    for root in (REPO_ROOT / "crates/trainer-bridge", REPO_ROOT / ".cargo"):
+        paths.update(_iter_tree(root))
+    paths.update(REPO_ROOT.glob("rust-toolchain*"))
+    paths.update([
+        REPO_ROOT / "scripts/deploy-basement.sh",
+        REPO_ROOT / "scripts/activate-basement.sh",
+    ])
     digest = hashlib.sha256()
     for path in sorted(paths):
-        digest.update(bytes(path))
+        rel = path.relative_to(REPO_ROOT)
+        digest.update(bytes(rel))
+        digest.update(b"\0")
         digest.update(hashlib.sha256(path.read_bytes()).digest())
     return digest.digest()
 
@@ -32,7 +49,11 @@ def watch():
             previous = current
             retry_at = 0
         elif current and current != deployed and time.monotonic() >= retry_at:
-            result = subprocess.run(["scripts/deploy-basement.sh"], check=False)
+            result = subprocess.run(
+                [str(REPO_ROOT / "scripts/deploy-basement.sh")],
+                cwd=REPO_ROOT,
+                check=False,
+            )
             if result.returncode == 0:
                 deployed = current
             else:

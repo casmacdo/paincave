@@ -44,8 +44,9 @@ fi
 cargo test --locked -p paincave-bridge
 cargo build --locked --release --bin trainer-bridge "${args[@]}"
 
-# Stream both artifacts through the same SSH connection. Each install gets a private
-# staging directory; the running executable is replaced only after preflight.
+# Stream both artifacts through the same SSH connection while explicitly invoking
+# POSIX sh on the remote host (even if the user's login shell is non-POSIX).
+activate_b64=$(base64 < scripts/activate-basement.sh | tr -d '\n')
 tar -cf - -C "$binary_dir/release" trainer-bridge \
   -C "$PWD/crates/trainer-bridge/systemd" paincave-bridge.service |
-  "${remote[@]}" "$(cat scripts/activate-basement.sh)"
+  "${remote[@]}" "sh -c 'f=\$(mktemp); trap \"rm -f \$f\" EXIT; printf %s $activate_b64 | base64 -d > \"\$f\" && sh \"\$f\"'"

@@ -7,6 +7,8 @@ dist/
 build/
 target/
 *.tsbuildinfo
+__pycache__/
+*.pyc
 
 # Cloudflare / Wrangler
 .wrangler/
