@@ -39,30 +39,33 @@ pub struct SyntheticRoute {
 
 impl Default for SyntheticRoute {
     fn default() -> Self {
+        // Slightly offset from exact (0.0, 0.0) so GPS parsers do not discard coordinates
+        // as an uninitialized Null Island fix, while staying in neutral open ocean away
+        // from any real cycling segments or personal locations.
         let points = vec![
             RoutePoint {
-                lat_deg: 0.0,
-                lon_deg: 0.0,
+                lat_deg: 0.01,
+                lon_deg: 0.01,
                 elevation_m: 100.0,
             },
             RoutePoint {
-                lat_deg: 0.0045,
-                lon_deg: 0.0,
+                lat_deg: 0.0145,
+                lon_deg: 0.01,
                 elevation_m: 118.0,
             },
             RoutePoint {
-                lat_deg: 0.0045,
-                lon_deg: 0.0045,
+                lat_deg: 0.0145,
+                lon_deg: 0.0145,
                 elevation_m: 128.0,
             },
             RoutePoint {
-                lat_deg: 0.0,
-                lon_deg: 0.0045,
+                lat_deg: 0.01,
+                lon_deg: 0.0145,
                 elevation_m: 112.0,
             },
             RoutePoint {
-                lat_deg: 0.0,
-                lon_deg: 0.0,
+                lat_deg: 0.01,
+                lon_deg: 0.01,
                 elevation_m: 100.0,
             },
         ];
@@ -102,10 +105,13 @@ impl SyntheticRoute {
         self.cumulative_distance_m
     }
 
-    /// Estimates route speed deterministically from power and route grade.
-    pub fn estimate_speed_kph(effective_watts: Option<u16>, grade_pct: f64) -> f64 {
-        let watts = f64::from(effective_watts.unwrap_or(0));
-        (10.0 + watts / 12.0 - grade_pct * 1.1).clamp(5.0, 55.0)
+    /// Estimates route speed deterministically from measured power and route grade.
+    /// Returns 0.0 kph when no pedaling power is measured.
+    pub fn estimate_speed_kph(measured_watts: Option<u16>, grade_pct: f64) -> f64 {
+        let Some(watts) = measured_watts.filter(|&w| w > 0) else {
+            return 0.0;
+        };
+        (10.0 + f64::from(watts) / 12.0 - grade_pct * 1.1).clamp(5.0, 55.0)
     }
 
     pub fn position_at(&self, cumulative_distance_m: f64) -> SyntheticRoutePosition {
@@ -123,8 +129,8 @@ impl SyntheticRoute {
         let Some(segment) = segment else {
             return SyntheticRoutePosition {
                 synthetic_route: true,
-                lat_deg: 0.0,
-                lon_deg: 0.0,
+                lat_deg: 0.01,
+                lon_deg: 0.01,
                 elevation_m: 100.0,
                 distance_m: cumulative_distance_m,
                 grade_pct: 0.0,
@@ -152,14 +158,14 @@ impl SyntheticRoute {
             elevation_m,
             distance_m: cumulative_distance_m,
             grade_pct,
-            speed_kph: Self::estimate_speed_kph(None, grade_pct),
+            speed_kph: 0.0,
         }
     }
 
     /// Advances exactly one workout second of fictional route distance.
-    pub fn advance_one_second(&mut self, effective_watts: Option<u16>) -> SyntheticRoutePosition {
+    pub fn advance_one_second(&mut self, measured_watts: Option<u16>) -> SyntheticRoutePosition {
         let grade_pct = self.position_at(self.cumulative_distance_m).grade_pct;
-        let speed_kph = Self::estimate_speed_kph(effective_watts, grade_pct);
+        let speed_kph = Self::estimate_speed_kph(measured_watts, grade_pct);
         self.cumulative_distance_m += speed_kph / 3.6;
         let mut position = self.position_at(self.cumulative_distance_m);
         position.speed_kph = speed_kph;
@@ -198,14 +204,14 @@ mod tests {
     fn route_interpolates_position_elevation_and_grade() {
         let route = SyntheticRoute::default();
         let start = route.position_at(0.0);
-        assert_eq!(start.lat_deg, 0.0);
-        assert_eq!(start.lon_deg, 0.0);
+        assert_eq!(start.lat_deg, 0.01);
+        assert_eq!(start.lon_deg, 0.01);
         assert_eq!(start.elevation_m, 100.0);
 
         let first_segment_end = route.segments[0].end_distance_m;
         let end = route.position_at(first_segment_end);
-        assert!((end.lat_deg - 0.0045).abs() < 1e-12);
-        assert_eq!(end.lon_deg, 0.0);
+        assert!((end.lat_deg - 0.0145).abs() < 1e-12);
+        assert_eq!(end.lon_deg, 0.01);
         assert!((end.elevation_m - 118.0).abs() < 1e-9);
 
         let mid = route.position_at(first_segment_end / 2.0);
@@ -214,13 +220,20 @@ mod tests {
     }
 
     #[test]
-    fn route_speed_changes_for_power_and_grade_and_advances_one_second() {
+    fn route_speed_changes_for_power_and_grade_and_stops_at_zero_watts() {
+        assert_eq!(SyntheticRoute::estimate_speed_kph(None, 0.0), 0.0);
+        assert_eq!(SyntheticRoute::estimate_speed_kph(Some(0), 5.0), 0.0);
+
         let flat = SyntheticRoute::estimate_speed_kph(Some(200), 0.0);
         let climb = SyntheticRoute::estimate_speed_kph(Some(200), 8.0);
         assert!(flat > climb);
         assert!((flat - 26.666666666666668).abs() < 1e-9);
 
         let mut route = SyntheticRoute::default();
+        let coasting = route.advance_one_second(Some(0));
+        assert_eq!(coasting.distance_m, 0.0);
+        assert_eq!(coasting.speed_kph, 0.0);
+
         let position = route.advance_one_second(Some(200));
         assert!(position.distance_m > 0.0);
         assert!(position.speed_kph >= 5.0);

@@ -48,12 +48,15 @@ pub fn encode_cycling_fit(
     samples: &[TelemetrySample],
     metrics: &RideMetricsResult,
 ) -> Vec<u8> {
-    let mut data = Vec::with_capacity(256 + samples.len() * 16);
+    let has_synthetic_route = samples.iter().any(|sample| sample.synthetic_route);
+    let mut data =
+        Vec::with_capacity(256 + samples.len() * if has_synthetic_route { 26 } else { 16 });
     let start_fit_ts = to_fit_timestamp(started_at);
     let end_fit_ts = start_fit_ts.saturating_add(metrics.elapsed_s);
-    let has_synthetic_route = samples.iter().any(|sample| sample.synthetic_route);
     // Product 65001 is a development-profile marker for PainCave fictional route data.
     let file_product = if has_synthetic_route { 65001u16 } else { 1u16 };
+    // FIT SubSport: 58 = virtual_activity, 6 = indoor_cycling
+    let sub_sport: u8 = if has_synthetic_route { 58 } else { 6 };
 
     // 1. file_id (global 0, local 0)
     push_def(
@@ -94,26 +97,45 @@ pub fn encode_cycling_fit(
     data.push(0);
 
     // 3. record definition (global 20, local 2) + 1Hz samples
-    push_def(
-        &mut data,
-        2,
-        20,
-        &[
-            (0, 4, 0x85),   // position_lat (semicircles)
-            (1, 4, 0x85),   // position_long (semicircles)
-            (2, 2, 0x84),   // altitude (m * 5 + 500)
-            (253, 4, 0x86), // timestamp
-            (3, 1, 0x02),   // heart_rate (bpm)
-            (4, 1, 0x02),   // cadence (rpm)
-            (5, 4, 0x86),   // distance (m * 100)
-            (6, 2, 0x84),   // speed (m/s * 1000)
-            (7, 2, 0x84),   // power (watts)
-        ],
-    );
+    if has_synthetic_route {
+        push_def(
+            &mut data,
+            2,
+            20,
+            &[
+                (0, 4, 0x85),   // position_lat (semicircles)
+                (1, 4, 0x85),   // position_long (semicircles)
+                (2, 2, 0x84),   // altitude (m * 5 + 500)
+                (253, 4, 0x86), // timestamp
+                (3, 1, 0x02),   // heart_rate (bpm)
+                (4, 1, 0x02),   // cadence (rpm)
+                (5, 4, 0x86),   // distance (m * 100)
+                (6, 2, 0x84),   // speed (m/s * 1000)
+                (7, 2, 0x84),   // power (watts)
+            ],
+        );
+    } else {
+        push_def(
+            &mut data,
+            2,
+            20,
+            &[
+                (253, 4, 0x86), // timestamp
+                (3, 1, 0x02),   // heart_rate (bpm)
+                (4, 1, 0x02),   // cadence (rpm)
+                (5, 4, 0x86),   // distance (m * 100)
+                (6, 2, 0x84),   // speed (m/s * 1000)
+                (7, 2, 0x84),   // power (watts)
+            ],
+        );
+    }
 
     let mut cumulative_distance_m = 0.0_f64;
     let mut synthetic_distance_m: Option<f64> = None;
     let mut max_power: Option<u16> = None;
+    let mut prev_elevation_m: Option<f64> = None;
+    let mut total_ascent_m = 0.0_f64;
+    let mut total_descent_m = 0.0_f64;
 
     for s in samples {
         let ts = start_fit_ts.saturating_add(s.t_s);
@@ -133,37 +155,50 @@ pub fn encode_cycling_fit(
             }
             cumulative_distance_m
         };
+        if let Some(elev) = s.elevation_m {
+            if let Some(prev) = prev_elevation_m {
+                let delta = elev - prev;
+                if delta > 0.0 {
+                    total_ascent_m += delta;
+                } else if delta < 0.0 {
+                    total_descent_m += -delta;
+                }
+            }
+            prev_elevation_m = Some(elev);
+        }
         let dist_cm = (dist_m * 100.0).round().clamp(0.0, u32::MAX as f64) as u32;
         let speed_mms = speed_ms.map_or(0xFFFF, |ms| (ms * 1000.0).round().min(65534.0) as u16);
         let power = s.watts.unwrap_or(0xFFFF);
         if let Some(w) = s.watts {
             max_power = Some(max_power.map_or(w, |m| m.max(w)));
         }
-        let lat_semicircles = s
-            .lat_deg
-            .map(|lat| {
-                ((lat / 180.0) * 2_147_483_648.0)
-                    .round()
-                    .clamp(i32::MIN as f64, i32::MAX as f64) as i32
-            })
-            .unwrap_or(i32::MAX);
-        let lon_semicircles = s
-            .lon_deg
-            .map(|lon| {
-                ((lon / 180.0) * 2_147_483_648.0)
-                    .round()
-                    .clamp(i32::MIN as f64, i32::MAX as f64) as i32
-            })
-            .unwrap_or(i32::MAX);
-        let altitude_encoded = s
-            .elevation_m
-            .map(|elevation| ((elevation + 500.0) * 5.0).round().clamp(0.0, 65534.0) as u16)
-            .unwrap_or(0xFFFF);
 
         data.push(0x02);
-        data.extend_from_slice(&lat_semicircles.to_le_bytes());
-        data.extend_from_slice(&lon_semicircles.to_le_bytes());
-        data.extend_from_slice(&altitude_encoded.to_le_bytes());
+        if has_synthetic_route {
+            let lat_semicircles = s
+                .lat_deg
+                .map(|lat| {
+                    ((lat / 180.0) * 2_147_483_648.0)
+                        .round()
+                        .clamp(i32::MIN as f64, (i32::MAX - 1) as f64) as i32
+                })
+                .unwrap_or(i32::MAX);
+            let lon_semicircles = s
+                .lon_deg
+                .map(|lon| {
+                    ((lon / 180.0) * 2_147_483_648.0)
+                        .round()
+                        .clamp(i32::MIN as f64, (i32::MAX - 1) as f64) as i32
+                })
+                .unwrap_or(i32::MAX);
+            let altitude_encoded = s
+                .elevation_m
+                .map(|elevation| ((elevation + 500.0) * 5.0).round().clamp(0.0, 65534.0) as u16)
+                .unwrap_or(0xFFFF);
+            data.extend_from_slice(&lat_semicircles.to_le_bytes());
+            data.extend_from_slice(&lon_semicircles.to_le_bytes());
+            data.extend_from_slice(&altitude_encoded.to_le_bytes());
+        }
         data.extend_from_slice(&ts.to_le_bytes());
         data.push(hr);
         data.push(cad);
@@ -194,6 +229,16 @@ pub fn encode_cycling_fit(
         .intensity_factor
         .map_or(0xFFFF, |v| (v * 1000.0).round().clamp(0.0, 65534.0) as u16);
     let total_work_j = (metrics.work_kj * 1000.0).round().max(0.0) as u32;
+    let total_ascent_u16 = if has_synthetic_route {
+        total_ascent_m.round().clamp(0.0, 65534.0) as u16
+    } else {
+        0xFFFF
+    };
+    let total_descent_u16 = if has_synthetic_route {
+        total_descent_m.round().clamp(0.0, 65534.0) as u16
+    } else {
+        0xFFFF
+    };
 
     // 4. lap (global 19, local 3)
     push_def(
@@ -211,6 +256,8 @@ pub fn encode_cycling_fit(
             (17, 1, 0x02),
             (19, 2, 0x84),
             (20, 2, 0x84),
+            (21, 2, 0x84), // total_ascent (m)
+            (22, 2, 0x84), // total_descent (m)
             (25, 1, 0x00),
             (39, 1, 0x00),
         ],
@@ -226,8 +273,10 @@ pub fn encode_cycling_fit(
     data.push(avg_cad_u8);
     data.extend_from_slice(&avg_pwr_u16.to_le_bytes());
     data.extend_from_slice(&max_pwr_u16.to_le_bytes());
+    data.extend_from_slice(&total_ascent_u16.to_le_bytes());
+    data.extend_from_slice(&total_descent_u16.to_le_bytes());
     data.push(2); // cycling
-    data.push(6); // indoor_cycling
+    data.push(sub_sport);
 
     // 5. session (global 18, local 4)
     push_def(
@@ -247,6 +296,8 @@ pub fn encode_cycling_fit(
             (18, 1, 0x02),
             (20, 2, 0x84),
             (21, 2, 0x84),
+            (22, 2, 0x84), // total_ascent (m)
+            (23, 2, 0x84), // total_descent (m)
             (26, 2, 0x84),
             (34, 2, 0x84),
             (35, 2, 0x84),
@@ -258,7 +309,7 @@ pub fn encode_cycling_fit(
     data.extend_from_slice(&end_fit_ts.to_le_bytes());
     data.extend_from_slice(&start_fit_ts.to_le_bytes());
     data.push(2);
-    data.push(6);
+    data.push(sub_sport);
     data.extend_from_slice(&total_elapsed_ms.to_le_bytes());
     data.extend_from_slice(&total_timer_ms.to_le_bytes());
     data.extend_from_slice(&total_dist_cm.to_le_bytes());
@@ -267,6 +318,8 @@ pub fn encode_cycling_fit(
     data.push(avg_cad_u8);
     data.extend_from_slice(&avg_pwr_u16.to_le_bytes());
     data.extend_from_slice(&max_pwr_u16.to_le_bytes());
+    data.extend_from_slice(&total_ascent_u16.to_le_bytes());
+    data.extend_from_slice(&total_descent_u16.to_le_bytes());
     data.extend_from_slice(&1u16.to_le_bytes());
     data.extend_from_slice(&np_u16.to_le_bytes());
     data.extend_from_slice(&tss_tenths.to_le_bytes());
@@ -359,27 +412,69 @@ mod tests {
         assert_eq!(record_count, 60);
         assert!(has_session);
         assert!(has_activity);
+
+        let first_record = parsed
+            .iter()
+            .find(|m| m.kind() == fitparser::profile::MesgNum::Record)
+            .ok_or_else(|| anyhow::anyhow!("missing record"))?;
+        let field_names: Vec<&str> = first_record.fields().iter().map(|f| f.name()).collect();
+        assert!(!field_names.contains(&"position_lat"));
+        assert!(!field_names.contains(&"position_long"));
         Ok(())
     }
 
     #[test]
     fn encodes_synthetic_route_position_elevation_distance_and_speed() -> anyhow::Result<()> {
-        let samples = vec![TelemetrySample {
-            t_s: 0,
-            watts: Some(200),
-            hr_bpm: Some(145),
-            cadence_rpm: Some(90),
-            speed_kph: Some(26.0),
-            target_watts: Some(200),
-            step_index: Some(0),
-            erg_bias_pct: Some(100),
-            synthetic_route: true,
-            lat_deg: Some(0.004),
-            lon_deg: Some(-0.003),
-            elevation_m: Some(112.5),
-            distance_m: Some(125.0),
-            grade_pct: Some(3.25),
-        }];
+        let samples = vec![
+            TelemetrySample {
+                t_s: 0,
+                watts: Some(200),
+                hr_bpm: Some(145),
+                cadence_rpm: Some(90),
+                speed_kph: Some(26.0),
+                target_watts: Some(200),
+                step_index: Some(0),
+                erg_bias_pct: Some(100),
+                synthetic_route: true,
+                lat_deg: Some(0.01),
+                lon_deg: Some(0.01),
+                elevation_m: Some(100.0),
+                distance_m: Some(0.0),
+                grade_pct: Some(3.6),
+            },
+            TelemetrySample {
+                t_s: 1,
+                watts: Some(200),
+                hr_bpm: Some(145),
+                cadence_rpm: Some(90),
+                speed_kph: Some(26.0),
+                target_watts: Some(200),
+                step_index: Some(0),
+                erg_bias_pct: Some(100),
+                synthetic_route: true,
+                lat_deg: Some(0.011),
+                lon_deg: Some(0.01),
+                elevation_m: Some(104.0),
+                distance_m: Some(125.0),
+                grade_pct: Some(3.6),
+            },
+            TelemetrySample {
+                t_s: 2,
+                watts: Some(200),
+                hr_bpm: Some(145),
+                cadence_rpm: Some(90),
+                speed_kph: Some(26.0),
+                target_watts: Some(200),
+                step_index: Some(0),
+                erg_bias_pct: Some(100),
+                synthetic_route: true,
+                lat_deg: Some(0.012),
+                lon_deg: Some(0.01),
+                elevation_m: Some(102.0),
+                distance_m: Some(250.0),
+                grade_pct: Some(-2.0),
+            },
+        ];
 
         let metrics = compute_ride_metrics(&samples, 260, Some(172), Some(190), Some(72.0), None);
         let fit_bytes = encode_cycling_fit(Utc::now(), &samples, &metrics);
@@ -387,31 +482,48 @@ mod tests {
 
         let file_id = parsed
             .iter()
-            .find(|message| message.kind() == fitparser::profile::MesgNum::FileId);
-        let Some(file_id) = file_id else {
-            anyhow::bail!("FIT file_id is present");
-        };
+            .find(|message| message.kind() == fitparser::profile::MesgNum::FileId)
+            .ok_or_else(|| anyhow::anyhow!("FIT file_id is present"))?;
         let product = file_id
             .fields()
             .iter()
-            .find(|field| field.name() == "product");
-        let Some(product) = product else {
-            anyhow::bail!("FIT file_id product is present");
-        };
+            .find(|field| field.name() == "product")
+            .ok_or_else(|| anyhow::anyhow!("FIT file_id product is present"))?;
         assert_eq!(product.value().to_string(), "65001");
 
         let record = parsed
             .iter()
-            .find(|message| message.kind() == fitparser::profile::MesgNum::Record);
-        let Some(record) = record else {
-            anyhow::bail!("synthetic route record is present");
-        };
+            .find(|message| message.kind() == fitparser::profile::MesgNum::Record)
+            .ok_or_else(|| anyhow::anyhow!("synthetic route record is present"))?;
         let field_names: Vec<&str> = record.fields().iter().map(|field| field.name()).collect();
         assert!(field_names.contains(&"position_lat"));
         assert!(field_names.contains(&"position_long"));
         assert!(field_names.contains(&"enhanced_altitude"));
         assert!(field_names.contains(&"distance"));
         assert!(field_names.contains(&"enhanced_speed"));
+
+        let session = parsed
+            .iter()
+            .find(|message| message.kind() == fitparser::profile::MesgNum::Session)
+            .ok_or_else(|| anyhow::anyhow!("session message is present"))?;
+        let sub_sport = session
+            .fields()
+            .iter()
+            .find(|field| field.name() == "sub_sport")
+            .ok_or_else(|| anyhow::anyhow!("session sub_sport is present"))?;
+        assert_eq!(sub_sport.value().to_string(), "virtual_activity");
+        let ascent = session
+            .fields()
+            .iter()
+            .find(|field| field.name() == "total_ascent")
+            .ok_or_else(|| anyhow::anyhow!("session total_ascent is present"))?;
+        assert_eq!(ascent.value().to_string(), "4");
+        let descent = session
+            .fields()
+            .iter()
+            .find(|field| field.name() == "total_descent")
+            .ok_or_else(|| anyhow::anyhow!("session total_descent is present"))?;
+        assert_eq!(descent.value().to_string(), "2");
         Ok(())
     }
 }

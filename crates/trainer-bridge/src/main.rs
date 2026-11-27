@@ -4,12 +4,12 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
-use paincave_bridge::start_bridge_service;
 use paincave_bridge::storage::sqlite::SqliteStore;
 use paincave_bridge::transport::TrainerTransport;
 use paincave_bridge::transport::ble::{BleTransport, probe_ble_devices};
 use paincave_bridge::transport::mock::MockTransport;
 use paincave_bridge::uploader::UploaderConfig;
+use paincave_bridge::{BridgeServiceOptions, start_bridge_service_with_options};
 
 pub const DEFAULT_BRIDGE_PORT: u16 = 8765;
 
@@ -58,6 +58,9 @@ enum Commands {
         /// Optional comma-separated extra allowed WebSocket origins (e.g. Cloudflare Worker URL)
         #[arg(long, env = "PAINCAVE_ALLOWED_ORIGIN")]
         allowed_origin: Option<String>,
+        /// Emit synthetic virtual-route GPS/elevation fields in live telemetry and FIT files
+        #[arg(long, env = "PAINCAVE_SYNTHETIC_ROUTE", default_value_t = false)]
+        synthetic_route: bool,
     },
     /// Scan nearby BLE devices for KICKR v5 (FTMS 0x1826) & Polar H10 (HR 0x180D)
     ProbeBle {
@@ -82,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
             bridge_token,
             data_dir,
             allowed_origin,
+            synthetic_route,
         } => {
             let transport: Arc<dyn TrainerTransport> = if mock {
                 Arc::new(MockTransport::new())
@@ -97,17 +101,24 @@ async fn main() -> anyhow::Result<()> {
                 retry_base_seconds: 2,
             };
 
-            let handle = start_bridge_service(
+            let handle = start_bridge_service_with_options(
                 transport,
                 store,
                 uploader_cfg,
                 port,
                 time_scale,
                 allowed_origin,
+                BridgeServiceOptions { synthetic_route },
             )
             .await?;
 
-            tracing::info!(addr = %handle.local_addr, mock, time_scale, "PainCave trainer-bridge listening");
+            tracing::info!(
+                addr = %handle.local_addr,
+                mock,
+                time_scale,
+                synthetic_route,
+                "PainCave trainer-bridge listening"
+            );
             tokio::signal::ctrl_c().await?;
             tracing::info!("Shutting down trainer-bridge");
             let _ = handle.shutdown_tx.send(());
@@ -126,11 +137,20 @@ async fn main() -> anyhow::Result<()> {
                 Ok(devices) => {
                     println!("Discovered BLE cycling devices ({}):", devices.len());
                     for dev in devices {
-                        let roles = match (dev.is_ftms, dev.is_hr) {
-                            (true, true) => "FTMS+HR",
-                            (true, false) => "FTMS",
-                            (false, true) => "HR",
-                            (false, false) => "OTHER",
+                        let mut role_parts = Vec::new();
+                        if dev.is_ftms {
+                            role_parts.push("FTMS");
+                        }
+                        if dev.is_cps {
+                            role_parts.push("CPS");
+                        }
+                        if dev.is_hr {
+                            role_parts.push("HR");
+                        }
+                        let roles = if role_parts.is_empty() {
+                            "OTHER".to_string()
+                        } else {
+                            role_parts.join("+")
                         };
                         println!(
                             "  - {} [{}] role={} connected={}",

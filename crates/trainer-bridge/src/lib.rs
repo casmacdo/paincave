@@ -25,6 +25,11 @@ pub struct RunningBridgeHandle {
     pub shutdown_tx: tokio::sync::oneshot::Sender<()>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct BridgeServiceOptions {
+    pub synthetic_route: bool,
+}
+
 pub async fn start_bridge_service(
     transport: Arc<dyn TrainerTransport>,
     store: SqliteStore,
@@ -32,6 +37,27 @@ pub async fn start_bridge_service(
     port: u16,
     time_scale: u32,
     allowed_origin: Option<String>,
+) -> anyhow::Result<RunningBridgeHandle> {
+    start_bridge_service_with_options(
+        transport,
+        store,
+        uploader_config,
+        port,
+        time_scale,
+        allowed_origin,
+        BridgeServiceOptions::default(),
+    )
+    .await
+}
+
+pub async fn start_bridge_service_with_options(
+    transport: Arc<dyn TrainerTransport>,
+    store: SqliteStore,
+    uploader_config: UploaderConfig,
+    port: u16,
+    time_scale: u32,
+    allowed_origin: Option<String>,
+    options: BridgeServiceOptions,
 ) -> anyhow::Result<RunningBridgeHandle> {
     let unfinished = store.detect_unfinished_rides()?;
     for ride in &unfinished {
@@ -54,7 +80,8 @@ pub async fn start_bridge_service(
         run_uploader_loop(uploader_store, uploader_config, uploader_notify).await;
     });
 
-    let mut engine = WorkoutEngine::new(Arc::clone(&transport), store.clone(), upload_notify);
+    let mut engine = WorkoutEngine::new(Arc::clone(&transport), store.clone(), upload_notify)
+        .with_synthetic_route(options.synthetic_route);
     let engine_event_tx = event_tx.clone();
     let engine_state = Arc::clone(&current_state);
     let tick_ms = (1000 / u64::from(time_scale.max(1))).max(5);
