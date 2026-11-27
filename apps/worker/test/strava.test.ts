@@ -1,6 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import goldenRide from "../../../packages/shared/fixtures/golden-ride.json" with { type: "json" };
+import { formatStravaRideDescription } from "../src/lib/strava-client.js";
 
 const testEnv = env as typeof env & { PUBLIC_APP_URL?: string };
 
@@ -299,5 +300,32 @@ describe("Strava Outbound OAuth & Background FIT Upload", () => {
     expect(`${authUrl.origin}${authUrl.pathname}`).toBe(
       "https://www.strava.com/oauth/authorize"
     );
+  });
+
+  it("formats Strava activity descriptions with notes, metrics, work intervals, and RPE", () => {
+    const desc = formatStravaRideDescription(
+      {
+        notes: "Legs felt snappy after warmup",
+        duration_s: 3600,
+        work_kj: 642.4,
+        avg_power: 218,
+        np_watts: 234,
+        intensity_factor: 0.9,
+        tss: 81.2,
+        avg_hr: 158,
+        compliance_pct: 97.4,
+        rpe: 7,
+        feel: 4,
+      },
+      [
+        { label: "Rep 1", actual_duration_s: 480, actual_avg_watts: 260 },
+        { label: "Rep 2", actual_duration_s: 480, actual_avg_watts: 264 },
+      ]
+    );
+
+    expect(desc).toContain("Legs felt snappy after warmup");
+    expect(desc).toContain("NP 234W · IF 0.90 · TSS 81 · 642 kJ · Avg HR 158 bpm · Compliance 97%");
+    expect(desc).toContain("Work intervals: 2 (16m @ 262W avg)");
+    expect(desc).toContain("RPE 7/10 · Feel 4/5");
   });
 });
