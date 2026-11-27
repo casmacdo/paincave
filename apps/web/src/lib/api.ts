@@ -171,6 +171,12 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(spec),
     }),
+  updateWorkout: (id: string, spec: WorkoutSpec) =>
+    requestJson<{ workout: WorkoutRecord }>(`/api/workouts/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(spec),
+    }),
   deleteWorkout: (id: string) =>
     requestJson<{ ok: boolean }>(`/api/workouts/${encodeURIComponent(id)}`, { method: "DELETE" }),
   getFlattenedWorkout: (id: string) =>
