@@ -121,6 +121,20 @@ export interface RideRecord {
   strava_upload_status: string;
 }
 
+export interface GarminSyncResponse {
+  ok: boolean;
+  rate_limited: boolean;
+  retry_after_s?: number | null;
+  start_date?: string;
+  end_date?: string;
+  activities_imported: number;
+  activities_skipped: number;
+  biometrics_upserted: number;
+  has_more?: boolean;
+  remaining_activities?: number;
+  error: string | null;
+}
+
 export interface RouteRecord {
   id: string;
   name: string;
@@ -422,41 +436,51 @@ export const api = {
       body: JSON.stringify({ api_key: apiKey }),
     }),
   syncGarminNow: (days = 7) =>
-    requestJson<{
-      ok: boolean;
-      rate_limited: boolean;
-      retry_after_s?: number | null;
-      start_date?: string;
-      end_date?: string;
-      activities_imported: number;
-      activities_skipped: number;
-      biometrics_upserted: number;
-      error: string | null;
-    }>("/api/garmin/sync", {
+    requestJson<GarminSyncResponse>("/api/garmin/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ days }),
     }),
-  syncGarminRange: (startDate: string, endDate: string, skipPmcRecompute = true) =>
-    requestJson<{
-      ok: boolean;
-      rate_limited: boolean;
-      retry_after_s?: number | null;
-      start_date: string;
-      end_date: string;
-      activities_imported: number;
-      activities_skipped: number;
-      biometrics_upserted: number;
-      error: string | null;
-    }>("/api/garmin/sync", {
+  syncGarminRange: async (
+    startDate: string,
+    endDate: string,
+    options:
+      | boolean
+      | {
+          skipPmcRecompute?: boolean;
+          maxActivities?: number;
+          includeBiometrics?: boolean;
+        } = true
+  ): Promise<GarminSyncResponse> => {
+    const resolved =
+      typeof options === "boolean"
+        ? { skipPmcRecompute: options }
+        : options;
+    const res = await fetch("/api/garmin/sync", {
       method: "POST",
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         start_date: startDate,
         end_date: endDate,
-        skip_pmc_recompute: skipPmcRecompute,
+        skip_pmc_recompute: resolved.skipPmcRecompute ?? true,
+        ...(resolved.maxActivities !== undefined
+          ? { max_activities: resolved.maxActivities }
+          : {}),
+        ...(resolved.includeBiometrics !== undefined
+          ? { include_biometrics: resolved.includeBiometrics }
+          : {}),
       }),
-    }),
+    });
+    const body = (await res.json().catch(() => null)) as GarminSyncResponse | null;
+    if (res.status === 429 && body && body.rate_limited) {
+      return body;
+    }
+    if (!res.ok || !body) {
+      throw new Error(body?.error ?? `Request failed (${res.status})`);
+    }
+    return body;
+  },
   rebuildPmc: () =>
     requestJson<{ ok: boolean; days_computed?: number }>("/api/import/rebuild-pmc", {
       method: "POST",

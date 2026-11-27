@@ -23,18 +23,23 @@ function isoDateShift(base: Date, deltaDays: number): string {
   return dt.toISOString().slice(0, 10);
 }
 
-function buildSevenDayChunks(startDay: string, endDay: string): { start: string; end: string }[] {
+function buildDateChunks(
+  startDay: string,
+  endDay: string,
+  maxChunkDays = 28
+): { start: string; end: string }[] {
   const chunks: { start: string; end: string }[] = [];
   if (!startDay || !endDay || startDay > endDay) return chunks;
   let cur = startDay;
+  const spanStep = Math.max(1, maxChunkDays - 1);
   while (cur <= endDay) {
     const [y, m, d] = cur.split("-").map(Number);
     if (!y || !m || !d) break;
-    const dt = new Date(Date.UTC(y, m - 1, d + 6));
+    const dt = new Date(Date.UTC(y, m - 1, d + spanStep));
     const cand = dt.toISOString().slice(0, 10);
     const chunkEnd = cand < endDay ? cand : endDay;
     chunks.push({ start: cur, end: chunkEnd });
-    const nextDt = new Date(Date.UTC(y, m - 1, d + 7));
+    const nextDt = new Date(Date.UTC(y, m - 1, d + maxChunkDays));
     cur = nextDt.toISOString().slice(0, 10);
   }
   return chunks;
@@ -75,6 +80,7 @@ export function SettingsPage({
     skipped: number;
     biometrics: number;
   } | null>(null);
+  const [backfillStatus, setBackfillStatus] = useState<string | null>(null);
   const backfillAbortRef = useRef(false);
 
   // Personal tokens
@@ -164,8 +170,34 @@ export function SettingsPage({
     }
   };
 
+  const waitCancellableMs = async (ms: number): Promise<boolean> => {
+    const stepMs = 250;
+    let remaining = ms;
+    while (remaining > 0) {
+      if (backfillAbortRef.current) return false;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(stepMs, remaining)));
+      remaining -= stepMs;
+    }
+    return !backfillAbortRef.current;
+  };
+
+  const waitWithCountdown = async (seconds: number, rangeLabel: string): Promise<boolean> => {
+    for (let s = seconds; s > 0; s--) {
+      if (backfillAbortRef.current) return false;
+      setBackfillStatus(
+        locale === "fr-CA"
+          ? `Limite Garmin atteinte sur ${rangeLabel}. Reprise automatique dans ${s}s...`
+          : `Garmin rate limit on ${rangeLabel}. Resuming automatically in ${s}s...`
+      );
+      const ok = await waitCancellableMs(1000);
+      if (!ok) return false;
+    }
+    setBackfillStatus(null);
+    return true;
+  };
+
   const handleBackfillGarmin = async () => {
-    const chunks = buildSevenDayChunks(backfillStart, backfillEnd);
+    const chunks = buildDateChunks(backfillStart, backfillEnd, 28);
     if (chunks.length === 0) {
       setGarminErr(
         locale === "fr-CA"
@@ -177,60 +209,113 @@ export function SettingsPage({
 
     backfillAbortRef.current = false;
     setBackfillRunning(true);
+    setBackfillStatus(null);
     setGarminErr(null);
     setSavedMsg(null);
 
     let totalImported = 0;
     let totalSkipped = 0;
     let totalBiometrics = 0;
+    let stoppedOnError = false;
 
     try {
       for (let i = 0; i < chunks.length; i++) {
-        if (backfillAbortRef.current) break;
+        if (backfillAbortRef.current || stoppedOnError) break;
         const chunk = chunks[i]!;
-        setBackfillProgress({
-          doneChunks: i,
-          totalChunks: chunks.length,
-          currentRange: `${chunk.start} → ${chunk.end}`,
-          imported: totalImported,
-          skipped: totalSkipped,
-          biometrics: totalBiometrics,
-        });
+        const rangeLabel = `${chunk.start} → ${chunk.end}`;
+        let includeBiometrics = true;
+        let rateLimitRetries = 0;
+        let chunkDone = false;
 
-        try {
-          const res = await api.syncGarminRange(chunk.start, chunk.end, true);
-          totalImported += res.activities_imported;
-          totalSkipped += res.activities_skipped;
-          totalBiometrics += res.biometrics_upserted;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          if (msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
-            setGarminErr(
-              locale === "fr-CA"
-                ? `Limite Garmin atteinte sur ${chunk.start} → ${chunk.end}. Patientez une minute puis relancez — les données déjà importées ne seront pas dupliquées.`
-                : `Garmin rate limit hit on ${chunk.start} → ${chunk.end}. Wait a minute and resume — already imported items are skipped safely.`
-            );
+        while (!chunkDone && !backfillAbortRef.current) {
+          setBackfillProgress({
+            doneChunks: i,
+            totalChunks: chunks.length,
+            currentRange: rangeLabel,
+            imported: totalImported,
+            skipped: totalSkipped,
+            biometrics: totalBiometrics,
+          });
+
+          try {
+            const res = await api.syncGarminRange(chunk.start, chunk.end, {
+              skipPmcRecompute: true,
+              maxActivities: 6,
+              includeBiometrics,
+            });
+            totalImported += res.activities_imported;
+            totalSkipped += res.activities_skipped;
+            totalBiometrics += res.biometrics_upserted;
+
+            if (res.rate_limited) {
+              rateLimitRetries++;
+              if (rateLimitRetries > 3) {
+                setBackfillStart(chunk.start);
+                setGarminErr(
+                  locale === "fr-CA"
+                    ? `Limite Garmin persistante sur ${rangeLabel}. Le curseur a été gardé à ${chunk.start} — patientez quelques minutes ou utilisez scripts/import-archive.ts pour importer une archive Garmin sans limite.`
+                    : `Garmin rate limit persisted on ${rangeLabel}. Cursor saved at ${chunk.start} — wait a few minutes to resume or use scripts/import-archive.ts for unlimited local archive import.`
+                );
+                stoppedOnError = true;
+                break;
+              }
+              const waitSec = Math.max(
+                15,
+                Math.min(300, res.retry_after_s ?? 60 * 2 ** (rateLimitRetries - 1))
+              );
+              const resumed = await waitWithCountdown(waitSec, rangeLabel);
+              if (!resumed) break;
+              continue;
+            }
+
+            rateLimitRetries = 0;
+            includeBiometrics = false;
+
+            if (res.has_more) {
+              setBackfillProgress({
+                doneChunks: i,
+                totalChunks: chunks.length,
+                currentRange: `${rangeLabel} (+${res.remaining_activities ?? "..."} rest.)`,
+                imported: totalImported,
+                skipped: totalSkipped,
+                biometrics: totalBiometrics,
+              });
+              const ok = await waitCancellableMs(1500);
+              if (!ok) break;
+            } else {
+              chunkDone = true;
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            setBackfillStart(chunk.start);
+            setGarminErr(msg);
+            stoppedOnError = true;
             break;
           }
-          setGarminErr(msg);
-          break;
         }
+
+        if (stoppedOnError || backfillAbortRef.current) break;
 
         setBackfillProgress({
           doneChunks: i + 1,
           totalChunks: chunks.length,
-          currentRange: `${chunk.start} → ${chunk.end}`,
+          currentRange: rangeLabel,
           imported: totalImported,
           skipped: totalSkipped,
           biometrics: totalBiometrics,
         });
+
+        if (i + 1 < chunks.length) {
+          const ok = await waitCancellableMs(1500);
+          if (!ok) break;
+        }
       }
 
       if (totalImported > 0) {
         await api.rebuildPmc().catch(() => {});
       }
       setGarmin(await api.getGarminStatus());
-      if (!backfillAbortRef.current) {
+      if (!backfillAbortRef.current && !stoppedOnError) {
         setSavedMsg(
           locale === "fr-CA"
             ? `Importation Garmin terminée : ${totalImported} nouvelles activités (${totalSkipped} déjà présentes), ${totalBiometrics} jours biométriques.`
@@ -238,6 +323,7 @@ export function SettingsPage({
         );
       }
     } finally {
+      setBackfillStatus(null);
       setBackfillRunning(false);
     }
   };
@@ -447,8 +533,17 @@ export function SettingsPage({
                         {backfillProgress.biometrics} {locale === "fr-CA" ? "jours" : "days"}
                       </span>
                     </div>
+                    {backfillStatus && (
+                      <div className="text-[11px] font-medium text-amber-300">{backfillStatus}</div>
+                    )}
                   </div>
                 )}
+
+                <p className="text-[11px] text-zinc-500">
+                  {locale === "fr-CA"
+                    ? "Astuce : pour importer plusieurs années d'un coup sans limite Garmin, utilisez l'export de compte Garmin + scripts/import-archive.ts."
+                    : "Tip: To import multi-year history at once with zero Garmin API limits, use a Garmin Account Export with scripts/import-archive.ts."}
+                </p>
               </div>
             </div>
           ) : (

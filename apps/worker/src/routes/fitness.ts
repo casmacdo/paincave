@@ -37,6 +37,16 @@ function shiftDay(day: string, deltaDays: number): string {
   return `${yy}-${mm}-${dd}`;
 }
 
+export function hasDisplayBiometrics(row: DailyBiometricsRow): boolean {
+  return (
+    row.hrv_rmssd_ms !== null ||
+    row.resting_hr_bpm !== null ||
+    row.sleep_duration_s !== null ||
+    row.sleep_score !== null ||
+    row.body_battery_high !== null
+  );
+}
+
 export function computeBiometricsBaseline(rows: readonly DailyBiometricsRow[]) {
   const avg = (vals: (number | null)[]): number | null => {
     const valid = vals.filter((v): v is number => v !== null && Number.isFinite(v));
@@ -45,11 +55,12 @@ export function computeBiometricsBaseline(rows: readonly DailyBiometricsRow[]) {
   };
 
   const sortedDesc = [...rows].sort((a, b) => b.day.localeCompare(a.day));
-  const recent7 = sortedDesc.slice(0, 7);
-  const latest = sortedDesc[0] ?? null;
+  const populatedDesc = sortedDesc.filter(hasDisplayBiometrics);
+  const recent7 = populatedDesc.slice(0, 7);
+  const latest = populatedDesc[0] ?? null;
 
   const hrv7d = avg(recent7.map((r) => r.hrv_rmssd_ms));
-  const hrvBaseline = avg(sortedDesc.map((r) => r.hrv_rmssd_ms));
+  const hrvBaseline = avg(populatedDesc.map((r) => r.hrv_rmssd_ms));
   const hrvDeltaPct =
     hrv7d !== null && hrvBaseline !== null && hrvBaseline > 0
       ? Number((((hrv7d - hrvBaseline) / hrvBaseline) * 100).toFixed(1))
@@ -61,7 +72,7 @@ export function computeBiometricsBaseline(rows: readonly DailyBiometricsRow[]) {
     hrv_baseline_avg: hrvBaseline,
     hrv_delta_pct: hrvDeltaPct,
     resting_hr_7d_avg: avg(recent7.map((r) => r.resting_hr_bpm)),
-    resting_hr_baseline_avg: avg(sortedDesc.map((r) => r.resting_hr_bpm)),
+    resting_hr_baseline_avg: avg(populatedDesc.map((r) => r.resting_hr_bpm)),
     sleep_hours_7d_avg: avg(
       recent7.map((r) => (r.sleep_duration_s !== null ? r.sleep_duration_s / 3600 : null))
     ),

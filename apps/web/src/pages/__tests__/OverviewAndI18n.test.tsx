@@ -143,6 +143,8 @@ describe("OverviewPage, persistent Trainer dropdown, Quebec French i18n, Light M
       activities_imported: 3,
       activities_skipped: 1,
       biometrics_upserted: 7,
+      has_more: false,
+      remaining_activities: 0,
       error: null,
     });
     vi.spyOn(api, "rebuildPmc").mockResolvedValue({ ok: true });
@@ -186,7 +188,11 @@ describe("OverviewPage, persistent Trainer dropdown, Quebec French i18n, Light M
     fireEvent.click(screen.getByRole("button", { name: "Importer la période" }));
 
     expect(await screen.findByText(/Importation Garmin terminée/)).toBeTruthy();
-    expect(rangeSpy).toHaveBeenCalledWith("2026-11-20", "2026-11-26", true);
+    expect(rangeSpy).toHaveBeenCalledWith("2026-11-20", "2026-11-26", {
+      skipPmcRecompute: true,
+      maxActivities: 6,
+      includeBiometrics: true,
+    });
   });
 
   it("navigates back to Overview when clicking PainCave logo in both French and English", async () => {

@@ -68,7 +68,7 @@ function addDaysUtc(day: string, deltaDays: number): string {
 export function splitDateRangeChunks(
   startDay: string,
   endDay: string,
-  maxChunkDays = 7
+  maxChunkDays = 28
 ): { start: string; end: string }[] {
   const chunks: { start: string; end: string }[] = [];
   let cur = startDay;
@@ -80,6 +80,27 @@ export function splitDateRangeChunks(
     cur = addDaysUtc(chunkEnd, 1);
   }
   return chunks;
+}
+
+export function sleepMs(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function hasAnyBiometricValue(row: DailyBiometricsInput): boolean {
+  return (
+    row.hrv_rmssd_ms != null ||
+    row.resting_hr_bpm != null ||
+    row.sleep_duration_s != null ||
+    row.sleep_score != null ||
+    row.body_battery_high != null ||
+    row.body_battery_low != null ||
+    row.body_battery_charged != null ||
+    row.stress_avg != null ||
+    row.steps != null ||
+    row.spo2_avg != null ||
+    row.weight_kg != null
+  );
 }
 
 export function normalizeGarminSportType(rawType: string | undefined): {
@@ -206,16 +227,26 @@ function asStr(v: unknown): string | null {
   return typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
 }
 
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
 export async function fetchGarminActivities(
   jwt: string,
   startDay: string,
-  endDay: string
+  endDay: string,
+  opts?: { requestDelayMs?: number }
 ): Promise<GarminActivityMeta[]> {
-  const chunks = splitDateRangeChunks(startDay, endDay, 7);
+  const chunks = splitDateRangeChunks(startDay, endDay, 28);
+  const delayMs = opts?.requestDelayMs ?? 300;
   const out: GarminActivityMeta[] = [];
   const seen = new Set<string>();
 
-  for (const chunk of chunks) {
+  for (let i = 0; i < chunks.length; i++) {
+    if (i > 0 && delayMs > 0) {
+      await sleepMs(delayMs);
+    }
+    const chunk = chunks[i]!;
     const url = new URL(`${GARMIN_PERSONAL_API_BASE}/activitylist-service/activities/search/activities`);
     url.searchParams.set("startDate", chunk.start);
     url.searchParams.set("endDate", chunk.end);
@@ -343,7 +374,8 @@ function extractArray(raw: unknown, keys: readonly string[]): unknown[] {
 export async function fetchGarminDailyBiometrics(
   jwt: string,
   startDay: string,
-  endDay: string
+  endDay: string,
+  opts?: { requestDelayMs?: number }
 ): Promise<DailyBiometricsInput[]> {
   const byDay = new Map<string, DailyBiometricsInput>();
   const ensure = (day: string): DailyBiometricsInput => {
@@ -354,90 +386,92 @@ export async function fetchGarminDailyBiometrics(
     return fresh;
   };
 
-  const chunks = splitDateRangeChunks(startDay, endDay, 7);
-  for (const chunk of chunks) {
-    const [dailiesRaw, hrvRaw, sleepRaw, bodyBatteryRaw, weightRaw] = await Promise.all([
-      fetchOptionalJson(
-        jwt,
-        `${GARMIN_PERSONAL_API_BASE}/usersummary-service/v2/dailysummaries?startDate=${chunk.start}&endDate=${chunk.end}`,
-        "dailysummaries"
-      ),
-      fetchOptionalJson(
-        jwt,
-        `${GARMIN_PERSONAL_API_BASE}/hrv-service/hrv/daily/${chunk.start}/${chunk.end}`,
-        "hrv"
-      ),
-      fetchOptionalJson(
-        jwt,
-        `${GARMIN_PERSONAL_API_BASE}/sleep-service/sleep/dailySleepSummariesByDate?startDate=${chunk.start}&endDate=${chunk.end}`,
-        "sleeps"
-      ),
-      fetchOptionalJson(
-        jwt,
-        `${GARMIN_PERSONAL_API_BASE}/wellness-service/wellness/bodyBattery/reports/daily?startDate=${chunk.start}&endDate=${chunk.end}`,
-        "bodyBattery"
-      ),
-      fetchOptionalJson(
-        jwt,
-        `${GARMIN_PERSONAL_API_BASE}/weight-service/weight/range/${chunk.start}/${chunk.end}?includeAll=true`,
-        "weight"
-      ),
-    ]);
+  const delayMs = opts?.requestDelayMs ?? 300;
+  const chunks = splitDateRangeChunks(startDay, endDay, 28);
+  for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+    const chunk = chunks[cIdx]!;
+    if (cIdx > 0 && delayMs > 0) {
+      await sleepMs(delayMs);
+    }
 
-    for (const item of extractArray(dailiesRaw, ["dailySummaries", "summaries", "data"])) {
-      if (!item || typeof item !== "object") continue;
-      const r = item as Record<string, unknown>;
+    const dailiesRaw = await fetchOptionalJson(
+      jwt,
+      `${GARMIN_PERSONAL_API_BASE}/usersummary-service/v2/dailysummaries?startDate=${chunk.start}&endDate=${chunk.end}`,
+      "dailysummaries"
+    );
+
+    let chunkHasBodyBattery = false;
+    for (const item of extractArray(dailiesRaw, ["data", "dailySummaries", "summaries"])) {
+      const r = asRecord(item);
+      if (!r) continue;
       const day = asStr(r["calendarDate"]) ?? asStr(r["day"]);
       if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
       const entry = ensure(day);
+
+      // Garmin Personal API v2 returns nested objects (heartRate, movement, stress, bodyBattery, spo2),
+      // while older summary schemas use flat camelCase fields; accept both.
+      const hrObj = asRecord(r["heartRate"]);
+      const mvObj = asRecord(r["movement"]);
+      const mvStepsObj = asRecord(mvObj?.["steps"]);
+      const stressObj = asRecord(r["stress"]);
+      const bbObj = asRecord(r["bodyBattery"]);
+      const spo2Obj = asRecord(r["spo2"]);
+
       entry.resting_hr_bpm =
+        asNum(hrObj?.["restingValue"]) ??
         asNum(r["restingHeartRate"]) ??
         asNum(r["restingHeartRateInBeatsPerMinute"]) ??
         entry.resting_hr_bpm ??
         null;
-      entry.steps = asNum(r["totalSteps"]) ?? asNum(r["steps"]) ?? entry.steps ?? null;
+      entry.steps =
+        asNum(mvObj?.["steps"]) ??
+        asNum(mvStepsObj?.["value"]) ??
+        asNum(r["totalSteps"]) ??
+        asNum(r["steps"]) ??
+        entry.steps ??
+        null;
       entry.stress_avg =
-        asNum(r["averageStressLevel"]) ?? asNum(r["stressAvg"]) ?? entry.stress_avg ?? null;
+        asNum(stressObj?.["avgLevel"]) ??
+        asNum(r["averageStressLevel"]) ??
+        asNum(r["stressAvg"]) ??
+        entry.stress_avg ??
+        null;
       entry.body_battery_high =
-        asNum(r["bodyBatteryHighestValue"]) ?? entry.body_battery_high ?? null;
+        asNum(bbObj?.["maxValue"]) ??
+        asNum(r["bodyBatteryHighestValue"]) ??
+        entry.body_battery_high ??
+        null;
       entry.body_battery_low =
-        asNum(r["bodyBatteryLowestValue"]) ?? entry.body_battery_low ?? null;
+        asNum(bbObj?.["minValue"]) ??
+        asNum(r["bodyBatteryLowestValue"]) ??
+        entry.body_battery_low ??
+        null;
       entry.body_battery_charged =
-        asNum(r["bodyBatteryChargedValue"]) ?? entry.body_battery_charged ?? null;
-      entry.spo2_avg = asNum(r["averageSpo2"]) ?? entry.spo2_avg ?? null;
+        asNum(bbObj?.["chargedValue"]) ??
+        asNum(r["bodyBatteryChargedValue"]) ??
+        entry.body_battery_charged ??
+        null;
+      entry.spo2_avg =
+        asNum(spo2Obj?.["avgValue"]) ?? asNum(r["averageSpo2"]) ?? entry.spo2_avg ?? null;
       if (asNum(r["weightInGrams"]) !== null) {
         entry.weight_kg = Number((asNum(r["weightInGrams"])! / 1000).toFixed(2));
       } else if (asNum(r["weightKg"]) !== null) {
         entry.weight_kg = Number(asNum(r["weightKg"])!.toFixed(2));
       }
-    }
-
-    for (const item of extractArray(bodyBatteryRaw, ["bodyBatteryValues", "reports", "data"])) {
-      if (!item || typeof item !== "object") continue;
-      const r = item as Record<string, unknown>;
-      const day = asStr(r["date"]) ?? asStr(r["calendarDate"]) ?? asStr(r["day"]);
-      if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
-      const entry = ensure(day);
-      entry.body_battery_charged =
-        entry.body_battery_charged ?? asNum(r["charged"]) ?? asNum(r["bodyBatteryChargedValue"]) ?? null;
-      const valuesArr = r["bodyBatteryValuesArray"];
-      if (Array.isArray(valuesArr) && valuesArr.length > 0) {
-        const levels: number[] = [];
-        for (const pair of valuesArr) {
-          if (Array.isArray(pair) && typeof pair[1] === "number" && Number.isFinite(pair[1])) {
-            levels.push(pair[1]);
-          }
-        }
-        if (levels.length > 0) {
-          entry.body_battery_high = entry.body_battery_high ?? Math.max(...levels);
-          entry.body_battery_low = entry.body_battery_low ?? Math.min(...levels);
-        }
+      if (entry.body_battery_high != null) {
+        chunkHasBodyBattery = true;
       }
     }
 
+    await sleepMs(delayMs);
+    const hrvRaw = await fetchOptionalJson(
+      jwt,
+      `${GARMIN_PERSONAL_API_BASE}/hrv-service/hrv/daily/${chunk.start}/${chunk.end}`,
+      "hrv"
+    );
     for (const item of extractArray(hrvRaw, ["hrvSummaries", "summaries", "data"])) {
-      if (!item || typeof item !== "object") continue;
-      const r = item as Record<string, unknown>;
+      const r = asRecord(item);
+      if (!r) continue;
       const day = asStr(r["calendarDate"]) ?? asStr(r["day"]);
       if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
       const entry = ensure(day);
@@ -450,13 +484,23 @@ export async function fetchGarminDailyBiometrics(
       entry.hrv_status = asStr(r["status"]) ?? asStr(r["hrvStatus"]) ?? entry.hrv_status ?? null;
     }
 
-    for (const item of extractArray(sleepRaw, ["dailySleepDTOs", "sleepSummaries", "data"])) {
-      if (!item || typeof item !== "object") continue;
-      const rawRec = item as Record<string, unknown>;
-      const r =
-        rawRec["dailySleepDTO"] && typeof rawRec["dailySleepDTO"] === "object"
-          ? (rawRec["dailySleepDTO"] as Record<string, unknown>)
-          : rawRec;
+    await sleepMs(delayMs);
+    const sleepRaw = await fetchOptionalJson(
+      jwt,
+      `${GARMIN_PERSONAL_API_BASE}/sleep-service/sleep/dailySleepSummariesByDate?startDate=${chunk.start}&endDate=${chunk.end}`,
+      "sleeps"
+    );
+    const extractedSleeps = extractArray(sleepRaw, ["dailySleepDTOs", "sleepSummaries", "data"]);
+    const sleepItems =
+      extractedSleeps.length > 0
+        ? extractedSleeps
+        : asRecord(sleepRaw)
+          ? [sleepRaw]
+          : [];
+    for (const item of sleepItems) {
+      const rawRec = asRecord(item);
+      if (!rawRec) continue;
+      const r = asRecord(rawRec["dailySleepDTO"]) ?? rawRec;
       const day = asStr(r["calendarDate"]) ?? asStr(r["day"]);
       if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
       const entry = ensure(day);
@@ -470,25 +514,92 @@ export async function fetchGarminDailyBiometrics(
         asNum(r["lightSleepSeconds"]) ?? asNum(r["lightSleepDurationInSeconds"]) ?? entry.sleep_light_s ?? null;
       entry.sleep_awake_s =
         asNum(r["awakeSleepSeconds"]) ?? asNum(r["awakeDurationInSeconds"]) ?? entry.sleep_awake_s ?? null;
-      const sleepScoresObj = r["sleepScores"] as { overall?: { value?: unknown } } | undefined;
-      const overallLegacy = (r["overallSleepScore"] as { value?: unknown } | undefined)?.value;
+      const sleepScoresObj = asRecord(r["sleepScores"]);
+      const overallObj = asRecord(sleepScoresObj?.["overall"]);
+      const overallLegacyObj = asRecord(r["overallSleepScore"]);
       entry.sleep_score =
-        asNum(sleepScoresObj?.overall?.value) ??
-        asNum(overallLegacy) ??
+        asNum(overallObj?.["value"]) ??
+        asNum(sleepScoresObj?.["overallScore"]) ??
+        asNum(overallLegacyObj?.["value"]) ??
         asNum(r["sleepScore"]) ??
         entry.sleep_score ??
         null;
     }
 
+    // Skip redundant Body Battery request when v2 dailysummaries already supplied daily peak values.
+    if (!chunkHasBodyBattery) {
+      await sleepMs(delayMs);
+      const bodyBatteryRaw = await fetchOptionalJson(
+        jwt,
+        `${GARMIN_PERSONAL_API_BASE}/wellness-service/wellness/bodyBattery/reports/daily?startDate=${chunk.start}&endDate=${chunk.end}`,
+        "bodyBattery"
+      );
+      const extractedBb = extractArray(bodyBatteryRaw, [
+        "dailies",
+        "bodyBatteryValues",
+        "reports",
+        "data",
+      ]);
+      const bbItems =
+        extractedBb.length > 0
+          ? extractedBb
+          : asRecord(bodyBatteryRaw)
+            ? [bodyBatteryRaw]
+            : [];
+      for (const item of bbItems) {
+        const r = asRecord(item);
+        if (!r) continue;
+        const day =
+          asStr(r["date"]) ??
+          asStr(r["calendarDate"]) ??
+          asStr(r["day"]) ??
+          (chunk.start === chunk.end ? chunk.start : null);
+        if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+        const entry = ensure(day);
+        entry.body_battery_high =
+          entry.body_battery_high ??
+          asNum(r["highestValue"]) ??
+          asNum(r["bodyBatteryHighestValue"]) ??
+          null;
+        entry.body_battery_low =
+          entry.body_battery_low ??
+          asNum(r["lowestValue"]) ??
+          asNum(r["bodyBatteryLowestValue"]) ??
+          null;
+        entry.body_battery_charged =
+          entry.body_battery_charged ??
+          asNum(r["chargedValue"]) ??
+          asNum(r["charged"]) ??
+          asNum(r["bodyBatteryChargedValue"]) ??
+          null;
+        const valuesArr = r["bodyBatteryValuesArray"];
+        if (Array.isArray(valuesArr) && valuesArr.length > 0) {
+          const levels: number[] = [];
+          for (const pair of valuesArr) {
+            if (Array.isArray(pair) && typeof pair[1] === "number" && Number.isFinite(pair[1])) {
+              levels.push(pair[1]);
+            }
+          }
+          if (levels.length > 0) {
+            entry.body_battery_high = entry.body_battery_high ?? Math.max(...levels);
+            entry.body_battery_low = entry.body_battery_low ?? Math.min(...levels);
+          }
+        }
+      }
+    }
+
+    await sleepMs(delayMs);
+    const weightRaw = await fetchOptionalJson(
+      jwt,
+      `${GARMIN_PERSONAL_API_BASE}/weight-service/weight/range/${chunk.start}/${chunk.end}?includeAll=true`,
+      "weight"
+    );
     for (const item of extractArray(weightRaw, ["dailyWeightSummaries", "dateWeightList", "data"])) {
-      if (!item || typeof item !== "object") continue;
-      const r = item as Record<string, unknown>;
+      const r = asRecord(item);
+      if (!r) continue;
       const day = asStr(r["summaryDate"]) ?? asStr(r["calendarDate"]) ?? asStr(r["day"]);
       if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
-      const latest =
-        r["latestWeight"] && typeof r["latestWeight"] === "object"
-          ? (r["latestWeight"] as Record<string, unknown>)
-          : r;
+      const latest = asRecord(r["latestWeight"]) ?? r;
       const grams = asNum(latest["weight"]) ?? asNum(r["weightInGrams"]);
       if (grams !== null && grams > 20_000) {
         ensure(day).weight_kg = Number((grams / 1000).toFixed(2));
@@ -498,5 +609,7 @@ export async function fetchGarminDailyBiometrics(
     }
   }
 
-  return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+  return [...byDay.values()]
+    .filter(hasAnyBiometricValue)
+    .sort((a, b) => a.day.localeCompare(b.day));
 }

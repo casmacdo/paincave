@@ -2,6 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { decryptSecret, encryptSecret } from "../src/lib/crypto.js";
 import { GARMIN_PERSONAL_API_BASE } from "../src/lib/garmin-client.js";
+import { syncGarminUser } from "../src/lib/garmin-sync.js";
 import { unwrapFitZipBytes } from "../src/lib/zip-fit.js";
 import { createTestSession } from "./auth-helper.js";
 
@@ -354,5 +355,176 @@ describe("Garmin Connect Personal API Sync & Encrypted Credentials", () => {
     ).json<{ connected: boolean; last_error: string | null }>();
     expect(statusAfter.connected).toBe(true);
     expect(statusAfter.last_error).toContain("429");
+  });
+
+  it("parses Garmin v2 nested dailysummaries, skips redundant bodyBattery and empty rows, and paginates max_activities", async () => {
+    testEnv.ALLOWED_USER_EMAILS = "v2-athlete@example.com";
+    const cookie = await createTestSession("V2 Athlete", "v2-athlete@example.com");
+
+    const today = new Date().toISOString().slice(0, 10);
+    const yesterdayDt = new Date();
+    yesterdayDt.setUTCDate(yesterdayDt.getUTCDate() - 1);
+    const yesterday = yesterdayDt.toISOString().slice(0, 10);
+
+    let bodyBatteryCalls = 0;
+    let hrvCalls = 0;
+    let sleepCalls = 0;
+
+    const originalFetch = globalThis.fetch.bind(globalThis);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url === `${GARMIN_PERSONAL_API_BASE}/personalapitoken-service/personal-api/personal-api-key/token`) {
+        const exp = Math.floor(Date.now() / 1000) + 86400;
+        const payloadB64 = btoa(JSON.stringify({ sub: "garmin-v2", exp })).replace(/=/g, "");
+        return new Response(`eyJhbGciOiJSUzI1NiJ9.${payloadB64}.sig`, {
+          status: 200,
+          headers: { "Content-Type": "text/plain" },
+        });
+      }
+
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/activitylist-service/activities/search/activities`)) {
+        return Response.json([
+          {
+            activityId: 9100001,
+            activityName: "Morning Run 1",
+            activityType: { typeKey: "running" },
+            startTimeGMT: `${today} 07:00:00`,
+            duration: 1500,
+            distance: 5000,
+          },
+          {
+            activityId: 9100002,
+            activityName: "Afternoon Run 2",
+            activityType: { typeKey: "running" },
+            startTimeGMT: `${today} 16:00:00`,
+            duration: 1500,
+            distance: 5000,
+          },
+        ]);
+      }
+
+      if (
+        url === `${GARMIN_PERSONAL_API_BASE}/download-service/files/activity/9100001` ||
+        url === `${GARMIN_PERSONAL_API_BASE}/download-service/files/activity/9100002`
+      ) {
+        return new Response(buildRunFitBytes(), { status: 200 });
+      }
+
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/usersummary-service/v2/dailysummaries`)) {
+        return Response.json({
+          data: [
+            {
+              calendarDate: yesterday,
+              heartRate: { restingValue: 49 },
+              movement: { steps: 9850 },
+              stress: { avgLevel: 26 },
+              bodyBattery: { maxValue: 91, minValue: 22, chargedValue: 64 },
+            },
+            {
+              // Empty skeleton row without any metric values must be ignored
+              calendarDate: today,
+            },
+          ],
+        });
+      }
+
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/hrv-service/hrv/daily/`)) {
+        hrvCalls++;
+        return Response.json({ hrvSummaries: [] });
+      }
+
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/sleep-service/sleep/dailySleepSummariesByDate`)) {
+        sleepCalls++;
+        return Response.json({
+          dailySleepDTO: {
+            calendarDate: yesterday,
+            sleepTimeSeconds: 27000,
+            sleepScores: { overall: { value: 83 } },
+          },
+        });
+      }
+
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/wellness-service/wellness/bodyBattery/reports/daily`)) {
+        bodyBatteryCalls++;
+        return Response.json([]);
+      }
+
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/weight-service/weight/range/`)) {
+        return Response.json({ dailyWeightSummaries: [] });
+      }
+
+      return originalFetch(input, init);
+    });
+
+    await exports.default.fetch("https://paincave.test/api/garmin/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ api_key: "garmin-v2-test-key-123456" }),
+    });
+
+    const userRow = await env.DB.prepare("SELECT id FROM user ORDER BY createdAt DESC LIMIT 1").first<{
+      id: string;
+    }>();
+    const userId = userRow!.id;
+
+    // Pre-insert a legacy all-null row for today (simulating prior buggy import)
+    await env.DB.prepare(
+      `INSERT INTO daily_biometrics (user_id, day, source) VALUES (?, ?, 'garmin_personal')`
+    )
+      .bind(userId, today)
+      .run();
+
+    // Page 1: cap at maxActivities = 1
+    const page1 = await syncGarminUser(testEnv, userId, {
+      startDate: yesterday,
+      endDate: today,
+      maxActivities: 1,
+      includeBiometrics: true,
+      skipPmcRecompute: true,
+      requestDelayMs: 0,
+    });
+
+    expect(page1.ok).toBe(true);
+    expect(page1.activities_imported).toBe(1);
+    expect(page1.has_more).toBe(true);
+    expect(page1.remaining_activities).toBe(1);
+    expect(page1.biometrics_upserted).toBe(1); // Only yesterday; empty today skeleton was filtered out
+    expect(bodyBatteryCalls).toBe(0); // Skipped because v2 dailysummaries supplied bodyBattery.maxValue
+
+    // Page 2: import remaining activity without re-calling biometrics
+    const page2 = await syncGarminUser(testEnv, userId, {
+      startDate: yesterday,
+      endDate: today,
+      maxActivities: 1,
+      includeBiometrics: false,
+      skipPmcRecompute: true,
+      requestDelayMs: 0,
+    });
+    expect(page2.ok).toBe(true);
+    expect(page2.activities_imported).toBe(1);
+    expect(page2.activities_skipped).toBe(1);
+    expect(page2.has_more).toBe(false);
+    expect(page2.remaining_activities).toBe(0);
+    expect(hrvCalls).toBe(1);
+    expect(sleepCalls).toBe(1);
+
+    // Biometrics baseline ignores the pre-existing all-null row for today and surfaces yesterday's populated values
+    const bioRes = await exports.default.fetch("https://paincave.test/api/fitness/biometrics?days=14", {
+      headers: { Cookie: cookie },
+    });
+    const bioBody = await bioRes.json<{
+      summary: {
+        latest: { day: string; resting_hr_bpm: number; body_battery_high: number; sleep_score: number } | null;
+        resting_hr_7d_avg: number | null;
+        sleep_score_7d_avg: number | null;
+      };
+    }>();
+    expect(bioBody.summary.latest?.day).toBe(yesterday);
+    expect(bioBody.summary.latest?.resting_hr_bpm).toBe(49);
+    expect(bioBody.summary.latest?.body_battery_high).toBe(91);
+    expect(bioBody.summary.latest?.sleep_score).toBe(83);
+    expect(bioBody.summary.resting_hr_7d_avg).toBe(49);
+    expect(bioBody.summary.sleep_score_7d_avg).toBe(83);
   });
 });

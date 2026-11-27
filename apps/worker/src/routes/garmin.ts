@@ -20,6 +20,8 @@ const SyncGarminSchema = z.object({
   start_date: z.string().regex(ISO_DAY_RE).optional(),
   end_date: z.string().regex(ISO_DAY_RE).optional(),
   skip_pmc_recompute: z.boolean().optional(),
+  max_activities: z.number().int().min(1).max(50).optional(),
+  include_biometrics: z.boolean().optional(),
 });
 
 export function createGarminRoutes(): Hono<HonoAppContext> {
@@ -63,6 +65,8 @@ export function createGarminRoutes(): Hono<HonoAppContext> {
       startDate: parsed.data.start_date,
       endDate: parsed.data.end_date,
       skipPmcRecompute: parsed.data.skip_pmc_recompute,
+      maxActivities: parsed.data.max_activities,
+      includeBiometrics: parsed.data.include_biometrics,
     });
     return c.json(result, result.ok ? 200 : result.rate_limited ? 429 : 400);
   });

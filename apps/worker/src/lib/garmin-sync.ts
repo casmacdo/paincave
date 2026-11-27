@@ -12,6 +12,8 @@ import {
   exchangeGarminPersonalToken,
   fetchGarminActivities,
   fetchGarminDailyBiometrics,
+  hasAnyBiometricValue,
+  sleepMs,
   type DailyBiometricsInput,
 } from "./garmin-client.js";
 import { logJson } from "./logger.js";
@@ -115,7 +117,8 @@ export async function upsertDailyBiometrics(
   rows: readonly DailyBiometricsInput[],
   source = "garmin_personal"
 ): Promise<number> {
-  if (rows.length === 0) return 0;
+  const populated = rows.filter(hasAnyBiometricValue);
+  if (populated.length === 0) return 0;
   const sql = `INSERT INTO daily_biometrics (
       user_id, day, hrv_rmssd_ms, hrv_status, resting_hr_bpm,
       sleep_duration_s, sleep_deep_s, sleep_rem_s, sleep_light_s, sleep_awake_s, sleep_score,
@@ -148,7 +151,7 @@ export async function upsertDailyBiometrics(
       source = excluded.source,
       updated_at = excluded.updated_at`;
 
-  const stmts = rows.map((r) =>
+  const stmts = populated.map((r) =>
     db
       .prepare(sql)
       .bind(
@@ -179,7 +182,7 @@ export async function upsertDailyBiometrics(
   for (let i = 0; i < stmts.length; i += 200) {
     await db.batch(stmts.slice(i, i + 200));
   }
-  return rows.length;
+  return populated.length;
 }
 
 async function getValidGarminJwt(env: AppEnv, userId: string): Promise<string | null> {
@@ -224,6 +227,8 @@ export interface GarminSyncResult {
   activities_imported: number;
   activities_skipped: number;
   biometrics_upserted: number;
+  has_more: boolean;
+  remaining_activities: number;
   error: string | null;
 }
 
@@ -242,6 +247,9 @@ export async function syncGarminUser(
     startDate?: string;
     endDate?: string;
     skipPmcRecompute?: boolean;
+    maxActivities?: number;
+    includeBiometrics?: boolean;
+    requestDelayMs?: number;
   } = {}
 ): Promise<GarminSyncResult> {
   const today = todayUtcDay();
@@ -256,9 +264,16 @@ export async function syncGarminUser(
       activities_imported: 0,
       activities_skipped: 0,
       biometrics_upserted: 0,
+      has_more: false,
+      remaining_activities: 0,
       error: "Garmin Personal API is not connected",
     };
   }
+
+  const isRangeSync = Boolean(opts.startDate && opts.endDate);
+  const maxActivities = Math.max(1, Math.min(50, opts.maxActivities ?? (isRangeSync ? 8 : 20)));
+  const includeBiometrics = opts.includeBiometrics ?? true;
+  const requestDelayMs = opts.requestDelayMs ?? 250;
 
   let startDay: string;
   let endDay: string;
@@ -279,6 +294,8 @@ export async function syncGarminUser(
 
   let imported = 0;
   let skipped = 0;
+  let remainingActivities = 0;
+  let fitDownloadsAttempted = 0;
   let biometricsCount = 0;
   let earliestNewDay: string | null = null;
 
@@ -294,11 +311,13 @@ export async function syncGarminUser(
         activities_imported: 0,
         activities_skipped: 0,
         biometrics_upserted: 0,
+        has_more: false,
+        remaining_activities: 0,
         error: "Garmin Personal API credentials missing",
       };
     }
 
-    const activities = await fetchGarminActivities(jwt, startDay, endDay);
+    const activities = await fetchGarminActivities(jwt, startDay, endDay, { requestDelayMs });
 
     for (const act of activities) {
       // Skip already imported activities before downloading FIT
@@ -313,6 +332,16 @@ export async function syncGarminUser(
         skipped++;
         continue;
       }
+
+      if (imported >= maxActivities) {
+        remainingActivities++;
+        continue;
+      }
+
+      if (fitDownloadsAttempted > 0 && requestDelayMs > 0) {
+        await sleepMs(requestDelayMs);
+      }
+      fitDownloadsAttempted++;
 
       const fitBytes = await downloadGarminActivityFit(jwt, act.activityId);
       const thresholds = await getLatestThresholds(env.DB, userId, act.rideDay);
@@ -493,9 +522,16 @@ export async function syncGarminUser(
       await recomputePmcFromDay(env.DB, earliestNewDay, userId);
     }
 
-    const bioStart = opts.startDate ? startDay : shiftDay(endDay, -Math.min(diffDaysInclusive(startDay, endDay) - 1, 6));
-    const bioRows = await fetchGarminDailyBiometrics(jwt, bioStart, endDay);
-    biometricsCount = await upsertDailyBiometrics(env.DB, userId, bioRows, "garmin_personal");
+    if (includeBiometrics) {
+      if (fitDownloadsAttempted > 0 && requestDelayMs > 0) {
+        await sleepMs(requestDelayMs);
+      }
+      const bioStart = opts.startDate
+        ? startDay
+        : shiftDay(endDay, -Math.min(diffDaysInclusive(startDay, endDay) - 1, 6));
+      const bioRows = await fetchGarminDailyBiometrics(jwt, bioStart, endDay, { requestDelayMs });
+      biometricsCount = await upsertDailyBiometrics(env.DB, userId, bioRows, "garmin_personal");
+    }
 
     await env.DB.prepare(
       `UPDATE provider_connections
@@ -516,9 +552,14 @@ export async function syncGarminUser(
       activities_imported: imported,
       activities_skipped: skipped,
       biometrics_upserted: biometricsCount,
+      has_more: remainingActivities > 0,
+      remaining_activities: remainingActivities,
       error: null,
     };
   } catch (err) {
+    if (earliestNewDay && !opts.skipPmcRecompute) {
+      await recomputePmcFromDay(env.DB, earliestNewDay, userId).catch(() => {});
+    }
     const isRateLimit = err instanceof GarminRateLimitError;
     const retryAfterS = err instanceof GarminRateLimitError ? err.retryAfterSeconds : null;
     const msg = (err instanceof Error ? err.message : String(err)).slice(0, 400);
@@ -546,6 +587,8 @@ export async function syncGarminUser(
       activities_imported: imported,
       activities_skipped: skipped,
       biometrics_upserted: biometricsCount,
+      has_more: remainingActivities > 0,
+      remaining_activities: remainingActivities,
       error: msg,
     };
   }
