@@ -50,5 +50,55 @@ describe("WorkoutProfileSvg hover and focus details", () => {
 
     fireEvent.focus(polygon);
     expect(screen.getByTestId("workout-profile-tooltip")).toBeTruthy();
+
+    fireEvent.keyDown(polygon, { key: "Escape" });
+    expect(screen.queryByTestId("workout-profile-tooltip")).toBeNull();
+  });
+
+  it("matches zone colors at boundary thresholds and shows grade for slope steps", () => {
+    const mixedSteps = [
+      {
+        step_index: 0,
+        label: "Endurance Boundary",
+        start_offset_s: 0,
+        duration_s: 300,
+        mode: "erg" as const,
+        watts_start: 143, // 55% of 260W -> Z2
+        watts_end: 143,
+        grade_pct: null,
+        resistance_pct: null,
+        cadence_rpm: null,
+        text_cue: null,
+        is_work_interval: false,
+      },
+      {
+        step_index: 1,
+        label: "Climb Simulation",
+        start_offset_s: 300,
+        duration_s: 300,
+        mode: "slope" as const,
+        watts_start: null,
+        watts_end: null,
+        grade_pct: 4.5,
+        resistance_pct: null,
+        cadence_rpm: null,
+        text_cue: null,
+        is_work_interval: true,
+      },
+    ];
+
+    render(<WorkoutProfileSvg steps={mixedSteps} ftpWatts={260} />);
+
+    const z2Poly = screen.getByTestId("workout-profile-step-0");
+    expect(z2Poly.getAttribute("fill")).toBe("#3b82f6");
+    fireEvent.mouseEnter(z2Poly);
+    expect(screen.getByTestId("workout-profile-tooltip").textContent).toContain("Z2");
+
+    const slopePoly = screen.getByTestId("workout-profile-step-1");
+    fireEvent.mouseEnter(slopePoly);
+    const slopeTooltip = screen.getByTestId("workout-profile-tooltip");
+    expect(slopeTooltip.textContent).toContain("Grade");
+    expect(slopeTooltip.textContent).toContain("4.5%");
+    expect(slopeTooltip.textContent).not.toContain("% FTP");
   });
 });

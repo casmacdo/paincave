@@ -72,6 +72,13 @@ export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
     try {
       await api.deleteRide(ride.ride_uuid);
       setRides((current) => current.filter((item) => item.ride_uuid !== ride.ride_uuid));
+      setSessions((current) =>
+        current.map((session) =>
+          session.completed_ride_uuid === ride.ride_uuid
+            ? { ...session, status: "planned", completed_ride_uuid: null }
+            : session
+        )
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete ride");
     } finally {
