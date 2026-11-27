@@ -3,6 +3,7 @@ import type { HonoAppContext } from "../types.js";
 import { requireUiAuth } from "../lib/auth.js";
 import {
   getWorkoutExport,
+  getWorkoutFitExport,
   saveValidatedWorkout,
   type WorkoutRow,
 } from "../lib/workouts-service.js";
@@ -103,6 +104,53 @@ export function createWorkoutRoutes(): Hono<HonoAppContext> {
       return c.json({ error: "Workout not found" }, 404);
     }
     return c.json({ ok: true });
+  });
+
+  router.get("/:id/export.fit", async (c) => {
+    const userId = c.get("userId");
+    const exported = await getWorkoutFitExport(c.env.DB, c.req.param("id"), userId);
+    if (!exported) {
+      return c.json({ error: "Workout not found" }, 404);
+    }
+    return new Response(exported.fitBytes, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/vnd.ant.fit",
+        "Content-Disposition": `attachment; filename="${slugFilename(exported.workout.name, "fit")}"`,
+      },
+    });
+  });
+
+  router.get("/:id/export", async (c) => {
+    const userId = c.get("userId");
+    const format = (c.req.query("format") ?? "fit").toLowerCase();
+    const id = c.req.param("id");
+    if (format === "fit") {
+      const exported = await getWorkoutFitExport(c.env.DB, id, userId);
+      if (!exported) return c.json({ error: "Workout not found" }, 404);
+      return new Response(exported.fitBytes, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/vnd.ant.fit",
+          "Content-Disposition": `attachment; filename="${slugFilename(exported.workout.name, "fit")}"`,
+        },
+      });
+    }
+    if (format === "zwo" || format === "erg") {
+      const exported = await getWorkoutExport(c.env.DB, id, format, userId);
+      if (!exported || typeof exported.content !== "string") {
+        return c.json({ error: "Workout not found or unsupported format for sport" }, 404);
+      }
+      return new Response(exported.content, {
+        status: 200,
+        headers: {
+          "Content-Type":
+            format === "zwo" ? "application/xml; charset=utf-8" : "text/plain; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${slugFilename(exported.workout.name, format)}"`,
+        },
+      });
+    }
+    return c.json({ error: "Unsupported export format. Expected fit, zwo, or erg." }, 400);
   });
 
   router.get("/:id/export.zwo", async (c) => {

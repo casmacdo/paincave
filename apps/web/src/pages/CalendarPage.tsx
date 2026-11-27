@@ -7,7 +7,29 @@ import {
 } from "../lib/api.js";
 
 interface CalendarPageProps {
+  indoorTrainerEnabled?: boolean;
   onLoadWorkout: (workoutId: string, plannedSessionId?: string) => Promise<void>;
+}
+
+function sportBadge(sport?: string): { label: string; className: string } {
+  switch (sport) {
+    case "running":
+      return { label: "Run", className: "bg-emerald-500/20 text-emerald-300" };
+    case "strength":
+      return { label: "Strength", className: "bg-violet-500/20 text-violet-300" };
+    case "mobility":
+      return { label: "Mobility", className: "bg-sky-500/20 text-sky-300" };
+    case "cycling":
+    default:
+      return { label: "Ride", className: "bg-orange-500/20 text-orange-300" };
+  }
+}
+
+function formatPace(secPerKm: number | null | undefined): string {
+  if (!secPerKm || secPerKm <= 0) return "--";
+  const mins = Math.floor(secPerKm / 60);
+  const secs = Math.round(secPerKm % 60);
+  return `${mins}:${String(secs).padStart(2, "0")}/km`;
 }
 
 function isoDateOffset(base: Date, deltaDays: number): string {
@@ -23,7 +45,10 @@ function localTodayIso(): string {
   return `${year}-${month}-${day}`;
 }
 
-export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
+export function CalendarPage({
+  indoorTrainerEnabled = true,
+  onLoadWorkout,
+}: CalendarPageProps) {
   const [sessions, setSessions] = useState<PlannedSessionRecord[]>([]);
   const [rides, setRides] = useState<RideRecord[]>([]);
   const [workouts, setWorkouts] = useState<WorkoutRecord[]>([]);
@@ -330,6 +355,11 @@ export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-mono text-zinc-400">{s.scheduled_date}</span>
                       <span
+                        className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase ${sportBadge(s.workout_sport).className}`}
+                      >
+                        {sportBadge(s.workout_sport).label}
+                      </span>
+                      <span
                         className={`rounded px-2 py-0.5 text-xs font-semibold uppercase ${
                           s.status === "completed"
                             ? "bg-emerald-500/20 text-emerald-300"
@@ -343,8 +373,10 @@ export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
                     </div>
                     <div className="mt-1 font-semibold text-white">{s.workout_name}</div>
                     <div className="text-xs text-zinc-400">
-                      {Math.round(s.planned_duration_s / 60)}m · TSS {s.predicted_tss ?? "--"} · IF{" "}
-                      {s.predicted_if ?? "--"}
+                      {Math.round(s.planned_duration_s / 60)}m · Load {s.predicted_tss ?? "--"}
+                      {(s.workout_sport ?? "cycling") === "cycling"
+                        ? ` · IF ${s.predicted_if ?? "--"}`
+                        : ""}
                     </div>
                     {s.coach_rationale && (
                       <p className="mt-1 text-xs text-zinc-400">{s.coach_rationale}</p>
@@ -371,13 +403,15 @@ export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
                         </button>
                       </>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => void onLoadWorkout(s.workout_id, s.id)}
-                      className="rounded-lg bg-orange-500 px-3.5 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400"
-                    >
-                      Load on Trainer
-                    </button>
+                    {indoorTrainerEnabled && (s.workout_sport ?? "cycling") === "cycling" && (
+                      <button
+                        type="button"
+                        onClick={() => void onLoadWorkout(s.workout_id, s.id)}
+                        className="rounded-lg bg-orange-500 px-3.5 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400"
+                      >
+                        Load on Trainer
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => void handleDeleteSession(s)}
@@ -394,17 +428,24 @@ export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
 
           <section className="space-y-3">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
-              Completed Rides
+              Completed Activities
             </h2>
             {rides.length === 0 ? (
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 text-sm text-zinc-500">
-                No completed rides recorded in this window yet.
+                No completed activities recorded in this window yet.
               </div>
             ) : (
               rides.map((r) => (
                 <div key={r.ride_uuid} className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono text-zinc-400">{r.ride_day}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-zinc-400">{r.ride_day}</span>
+                      <span
+                        className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase ${sportBadge(r.sport).className}`}
+                      >
+                        {sportBadge(r.sport).label}
+                      </span>
+                    </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-zinc-500">{r.source}</span>
                       <button
@@ -419,8 +460,9 @@ export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
                   </div>
                   <div className="mt-1 font-semibold text-white">{r.name}</div>
                   <div className="mt-1 text-xs text-zinc-400">
-                    {Math.round(r.duration_s / 60)}m · NP {r.np_watts ?? "--"}W · TSS {r.tss} · HR{" "}
-                    {r.avg_hr ?? "--"} bpm
+                    {r.sport === "running"
+                      ? `${Math.round(r.duration_s / 60)}m · ${r.distance_m ? `${(r.distance_m / 1000).toFixed(1)} km` : "--"} · ${formatPace(r.avg_pace_s_per_km)} · Load ${r.tss} · HR ${r.avg_hr ?? "--"} bpm`
+                      : `${Math.round(r.duration_s / 60)}m · NP ${r.np_watts ?? "--"}W · TSS ${r.tss} · HR ${r.avg_hr ?? "--"} bpm`}
                   </div>
                 </div>
               ))

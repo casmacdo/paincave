@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { WorkoutCategory } from "@paincave/shared";
 import { WorkoutsPage } from "../WorkoutsPage.js";
 import { api, type WorkoutRecord } from "../../lib/api.js";
 
-function makeWorkout(overrides: Partial<WorkoutRecord> & { id: string; name: string; category: WorkoutCategory }): WorkoutRecord {
+function makeWorkout(overrides: Partial<WorkoutRecord> & { id: string; name: string; category: string }): WorkoutRecord {
   const durationS = overrides.duration_s ?? 3600;
   const spec = {
     schema_version: 1,
@@ -15,14 +14,15 @@ function makeWorkout(overrides: Partial<WorkoutRecord> & { id: string; name: str
   };
   return {
     id: overrides.id,
+    sport: overrides.sport ?? "cycling",
     name: overrides.name,
     description: overrides.description ?? "",
     category: overrides.category,
-    spec_json: JSON.stringify(spec),
+    spec_json: overrides.spec_json ?? JSON.stringify(spec),
     duration_s: durationS,
-    predicted_np: overrides.predicted_np ?? 220,
-    predicted_if: overrides.predicted_if ?? 0.85,
-    predicted_tss: overrides.predicted_tss ?? 72,
+    predicted_np: overrides.predicted_np !== undefined ? overrides.predicted_np : 220,
+    predicted_if: overrides.predicted_if !== undefined ? overrides.predicted_if : 0.85,
+    predicted_tss: overrides.predicted_tss !== undefined ? overrides.predicted_tss : 72,
     created_by: overrides.created_by ?? "llm",
     updated_at: overrides.updated_at ?? "2026-11-26T12:00:00Z",
   };
@@ -263,5 +263,95 @@ describe("WorkoutsPage organization & categories", () => {
     const notice = await screen.findByRole("status");
     expect(notice.textContent).toContain('Scheduled "Sweet Spot 2x20" for 2026-12-01.');
     expect(notice.textContent).toContain("Tuesday max duration is 45 min");
+  });
+
+  it("renders running and strength workouts with sport badges, sport filter pills, and hides trainer load button", async () => {
+    const multiSportWorkouts: WorkoutRecord[] = [
+      ...SAMPLE_WORKOUTS,
+      makeWorkout({
+        id: "w-run-1",
+        sport: "running",
+        name: "5x1k Threshold Cruise",
+        category: "threshold",
+        duration_s: 3000,
+        predicted_np: null,
+        predicted_if: 0.94,
+        predicted_tss: 68,
+        spec_json: JSON.stringify({
+          schema_version: 1,
+          sport: "running",
+          name: "5x1k Threshold Cruise",
+          description: "Controlled threshold repeats",
+          category: "threshold",
+          steps: [
+            { type: "warmup", duration_s: 600, pace_zone: "easy", label: "Warmup" },
+            {
+              type: "repeat",
+              count: 5,
+              steps: [
+                { type: "interval", distance_m: 1000, pace_zone: "threshold", label: "1k T" },
+                { type: "recovery", duration_s: 90, pace_zone: "recovery", label: "Jog" },
+              ],
+            },
+            { type: "cooldown", duration_s: 600, pace_zone: "easy", label: "Cooldown" },
+          ],
+        }),
+      }),
+      makeWorkout({
+        id: "w-str-1",
+        sport: "strength",
+        name: "Lower Body Force",
+        category: "lower_body",
+        duration_s: 2700,
+        predicted_np: null,
+        predicted_if: 0.72,
+        predicted_tss: 36,
+        spec_json: JSON.stringify({
+          schema_version: 1,
+          sport: "strength",
+          name: "Lower Body Force",
+          description: "Heavy hinge & single-leg session",
+          category: "lower_body",
+          blocks: [
+            {
+              label: "Main",
+              block_type: "main",
+              exercises: [
+                {
+                  name: "Trap Bar Deadlift",
+                  movement_pattern: "hinge",
+                  sets: 4,
+                  reps: 5,
+                  target_rpe_or_rir: "2 RIR",
+                  rest_s: 180,
+                },
+              ],
+            },
+          ],
+        }),
+      }),
+    ];
+
+    vi.spyOn(api, "getWorkouts").mockResolvedValue({ workouts: multiSportWorkouts });
+    render(<WorkoutsPage ftpWatts={260} onLoadWorkout={vi.fn().mockResolvedValue(undefined)} />);
+
+    const runCard = await screen.findByTestId("workout-card-w-run-1");
+    expect(within(runCard).getByText("Running")).toBeTruthy();
+    expect(within(runCard).getByRole("link", { name: ".fit" }).getAttribute("href")).toBe(
+      "/api/workouts/w-run-1/export.fit"
+    );
+    expect(within(runCard).queryByRole("button", { name: "Load on Trainer" })).toBeNull();
+
+    const strCard = screen.getByTestId("workout-card-w-str-1");
+    expect(within(strCard).getByText("Strength")).toBeTruthy();
+    expect(within(strCard).getByText("Trap Bar Deadlift")).toBeTruthy();
+    expect(within(strCard).queryByRole("button", { name: "Load on Trainer" })).toBeNull();
+
+    // Filter by Running sport pill
+    const sportBar = screen.getByRole("group", { name: "Filter by sport" });
+    fireEvent.click(within(sportBar).getByRole("button", { name: /Running/ }));
+    expect(screen.getByText("5x1k Threshold Cruise")).toBeTruthy();
+    expect(screen.queryByText("Lower Body Force")).toBeNull();
+    expect(screen.queryByText("Sweet Spot 2x20")).toBeNull();
   });
 });

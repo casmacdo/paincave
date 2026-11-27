@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { computeDailyPmc, downsampleRecords, parseFitRecords } from "@paincave/shared";
 import { optionalCoercedInt, optionalEnum, type McpToolRegistry } from "./protocol.js";
+import type { AppEnv } from "../types.js";
 import { ensureAthleteProfile } from "../lib/better-auth.js";
 import { getFitnessOverview } from "../lib/fitness-service.js";
 import { todayUtcDay } from "../lib/pmc-store.js";
@@ -12,6 +13,7 @@ import {
   type CoachingNoteRow,
   type TrainingBlockRow,
 } from "../routes/athlete.js";
+import { computeBiometricsBaseline, type DailyBiometricsRow } from "../routes/fitness.js";
 
 function shiftDay(day: string, deltaDays: number): string {
   const [y, m, d] = day.split("-").map(Number);
@@ -31,7 +33,320 @@ function safeJsonParse(raw: string, fallback: unknown): unknown {
   }
 }
 
+function summarizeActivityRow(r: RideRow) {
+  return {
+    ride_uuid: r.ride_uuid,
+    sport: r.sport,
+    sub_sport: r.sub_sport,
+    name: r.name,
+    source: r.source,
+    workout_id: r.workout_id,
+    started_at: r.started_at,
+    ride_day: r.ride_day,
+    duration_s: r.duration_s,
+    distance_m: r.distance_m,
+    elevation_gain_m: r.elevation_gain_m,
+    avg_pace_s_per_km: r.avg_pace_s_per_km,
+    gap_s_per_km: r.gap_s_per_km,
+    pa_hr_decoupling: r.pa_hr_decoupling,
+    work_kj: r.work_kj,
+    avg_power: r.avg_power,
+    np_watts: r.np_watts,
+    intensity_factor: r.intensity_factor,
+    tss: r.tss,
+    variability_index: r.variability_index,
+    avg_hr: r.avg_hr,
+    max_hr: r.max_hr,
+    efficiency_factor: r.efficiency_factor,
+    pw_hr_decoupling: r.pw_hr_decoupling,
+    hrr_60s: r.hrr_60s,
+    time_gt_90_hrmax_s: r.time_gt_90_hrmax_s,
+    avg_cadence: r.avg_cadence,
+    compliance_pct: r.compliance_pct,
+    rpe: r.rpe,
+    feel: r.feel,
+    notes: r.notes,
+    quality_flags: safeJsonParse(r.quality_flags_json, {}),
+  };
+}
+
+async function fetchActivityDetail(env: AppEnv, userId: string, rideUuid: string) {
+  const ride = await env.DB.prepare("SELECT * FROM rides WHERE ride_uuid = ? AND user_id = ?")
+    .bind(rideUuid, userId)
+    .first<RideRow>();
+
+  if (!ride) {
+    throw new Error(`Activity not found: ${rideUuid}`);
+  }
+
+  const [intervalsRes, peaksRes, lapsRes] = await Promise.all([
+    env.DB.prepare("SELECT * FROM ride_intervals WHERE ride_uuid = ? ORDER BY step_index ASC")
+      .bind(rideUuid)
+      .all(),
+    env.DB.prepare("SELECT * FROM ride_peaks WHERE ride_uuid = ? ORDER BY duration_s ASC")
+      .bind(rideUuid)
+      .all(),
+    env.DB.prepare(
+      "SELECT * FROM activity_laps WHERE ride_uuid = ? AND user_id = ? ORDER BY lap_index ASC"
+    )
+      .bind(rideUuid, userId)
+      .all(),
+  ]);
+
+  const linkedWorkout = ride.workout_id
+    ? await env.DB.prepare(
+        "SELECT id, name, sport, category, spec_json FROM workouts WHERE id = ? AND user_id = ?"
+      )
+        .bind(ride.workout_id, userId)
+        .first<{ id: string; name: string; sport: string; category: string; spec_json: string }>()
+    : null;
+
+  return {
+    ride: {
+      ...ride,
+      power_zones: safeJsonParse(ride.power_zones_json, {}),
+      hr_zones: safeJsonParse(ride.hr_zones_json, {}),
+      quality_flags: safeJsonParse(ride.quality_flags_json, {}),
+      running_dynamics: safeJsonParse(ride.running_dynamics_json, {}),
+    },
+    intervals: intervalsRes.results,
+    peaks: peaksRes.results,
+    laps: lapsRes.results,
+    workout: linkedWorkout
+      ? {
+          id: linkedWorkout.id,
+          name: linkedWorkout.name,
+          sport: linkedWorkout.sport,
+          category: linkedWorkout.category,
+          spec: safeJsonParse(linkedWorkout.spec_json, null),
+        }
+      : null,
+  };
+}
+
 export function registerReadTools(registry: McpToolRegistry): void {
+  registry.register(
+    "get_health_and_training_brief",
+    {
+      description:
+        "Primary LLM briefing tool. Returns one compact JSON snapshot of athlete profile, thresholds, active training blocks, LLM memory notes, 7d HRV/RHR/sleep/Body Battery vs 60d baseline, current CTL/ATL/TSB + multi-sport weekly load & running ACWR, recent activities, and upcoming 7-day calendar.",
+      inputSchema: z.object({
+        days: optionalCoercedInt(7, 30),
+      }),
+    },
+    async ({ days }, env, userId) => {
+      const lookbackDays = days ?? 14;
+      const today = todayUtcDay();
+      const sinceRecent = shiftDay(today, -(lookbackDays - 1));
+      const since7d = shiftDay(today, -6);
+      const since28d = shiftDay(today, -27);
+      const since60d = shiftDay(today, -59);
+      const next7d = shiftDay(today, 7);
+
+      await ensureAthleteProfile(env.DB, userId);
+
+      const [
+        profile,
+        latestThresholds,
+        blocksRes,
+        notesRes,
+        biometricsRes,
+        latestPmc,
+        activities28dRes,
+        upcomingRes,
+      ] = await Promise.all([
+        env.DB.prepare("SELECT * FROM athlete_profile WHERE user_id = ?").bind(userId).first(),
+        getLatestThresholds(env.DB, userId),
+        env.DB.prepare(
+          "SELECT * FROM training_blocks WHERE user_id = ? AND active = 1 ORDER BY start_date DESC"
+        )
+          .bind(userId)
+          .all<TrainingBlockRow>(),
+        env.DB.prepare(
+          "SELECT * FROM coaching_notes WHERE user_id = ? AND active = 1 ORDER BY updated_at DESC"
+        )
+          .bind(userId)
+          .all<CoachingNoteRow>(),
+        env.DB.prepare(
+          `SELECT user_id, day, hrv_rmssd_ms, hrv_status, resting_hr_bpm,
+                  sleep_duration_s, sleep_deep_s, sleep_rem_s, sleep_light_s, sleep_awake_s, sleep_score,
+                  body_battery_high, body_battery_low, body_battery_charged,
+                  stress_avg, steps, spo2_avg, weight_kg, cycle_phase, source
+           FROM daily_biometrics
+           WHERE user_id = ? AND day >= ?
+           ORDER BY day ASC`
+        )
+          .bind(userId, since60d)
+          .all<DailyBiometricsRow>(),
+        env.DB.prepare(
+          "SELECT day, ctl, atl, tsb, ramp_rate_7d FROM daily_pmc WHERE user_id = ? ORDER BY day DESC LIMIT 1"
+        )
+          .bind(userId)
+          .first<{ day: string; ctl: number; atl: number; tsb: number; ramp_rate_7d: number }>(),
+        env.DB.prepare(
+          "SELECT * FROM rides WHERE user_id = ? AND ride_day >= ? ORDER BY started_at DESC"
+        )
+          .bind(userId, since28d)
+          .all<RideRow>(),
+        env.DB.prepare(
+          `SELECT ps.id, ps.scheduled_date, ps.status, ps.coach_rationale,
+                  w.id AS workout_id, w.name AS workout_name, w.sport AS workout_sport,
+                  w.category AS workout_category, w.duration_s, w.predicted_tss, w.predicted_if
+           FROM planned_sessions ps
+           JOIN workouts w ON w.id = ps.workout_id AND w.user_id = ps.user_id
+           WHERE ps.user_id = ? AND ps.scheduled_date >= ? AND ps.scheduled_date <= ?
+           ORDER BY ps.scheduled_date ASC`
+        )
+          .bind(userId, today, next7d)
+          .all(),
+      ]);
+
+      const readinessBaseline = computeBiometricsBaseline(biometricsRes.results);
+      const recent7Bio = [...biometricsRes.results]
+        .sort((a, b) => b.day.localeCompare(a.day))
+        .slice(0, 7);
+      const bbVals = recent7Bio
+        .map((r) => r.body_battery_high)
+        .filter((v): v is number => v !== null && Number.isFinite(v));
+      const bodyBattery7dAvg =
+        bbVals.length > 0
+          ? Number((bbVals.reduce((s, v) => s + v, 0) / bbVals.length).toFixed(1))
+          : null;
+
+      let run7dM = 0;
+      let runPrev7dM = 0;
+      let run28dM = 0;
+      let bike7dS = 0;
+      let bike7dTss = 0;
+      let strength7dSessions = 0;
+      let total7dS = 0;
+      let total7dTss = 0;
+      const prev7Start = shiftDay(today, -13);
+      const prev7End = shiftDay(today, -7);
+
+      for (const a of activities28dRes.results) {
+        if (a.sport === "running") {
+          run28dM += a.distance_m ?? 0;
+          if (a.ride_day >= since7d) run7dM += a.distance_m ?? 0;
+          else if (a.ride_day >= prev7Start && a.ride_day <= prev7End) {
+            runPrev7dM += a.distance_m ?? 0;
+          }
+        }
+        if (a.ride_day >= since7d) {
+          total7dS += a.duration_s;
+          total7dTss += a.tss;
+          if (a.sport === "cycling") {
+            bike7dS += a.duration_s;
+            bike7dTss += a.tss;
+          } else if (a.sport === "strength") {
+            strength7dSessions++;
+          }
+        }
+      }
+
+      const run7dKm = Number((run7dM / 1000).toFixed(1));
+      const runPrev7dKm = Number((runPrev7dM / 1000).toFixed(1));
+      const run28dWeeklyAvgKm = Number(((run28dM / 1000) / 4).toFixed(1));
+      const runWowPct =
+        runPrev7dKm > 0
+          ? Number((((run7dKm - runPrev7dKm) / runPrev7dKm) * 100).toFixed(1))
+          : null;
+      const runAcwr =
+        run28dWeeklyAvgKm > 0 ? Number((run7dKm / run28dWeeklyAvgKm).toFixed(2)) : null;
+
+      const recentActivities = activities28dRes.results
+        .filter((a) => a.ride_day >= sinceRecent)
+        .slice(0, 25)
+        .map((r) => ({
+          ride_uuid: r.ride_uuid,
+          day: r.ride_day,
+          sport: r.sport,
+          sub_sport: r.sub_sport,
+          name: r.name,
+          duration_min: Math.round(r.duration_s / 60),
+          distance_km: r.distance_m ? Number((r.distance_m / 1000).toFixed(2)) : null,
+          elevation_gain_m: r.elevation_gain_m,
+          avg_pace_s_per_km: r.avg_pace_s_per_km,
+          gap_s_per_km: r.gap_s_per_km,
+          pa_hr_decoupling: r.pa_hr_decoupling,
+          np_watts: r.np_watts,
+          tss: r.tss,
+          avg_hr: r.avg_hr,
+          max_hr: r.max_hr,
+          compliance_pct: r.compliance_pct,
+        }));
+
+      return {
+        as_of_day: today,
+        profile,
+        latest_thresholds: latestThresholds,
+        active_training_blocks: blocksRes.results.map((b) => ({
+          ...b,
+          constraints: safeJsonParse(b.constraints_json, {}),
+        })),
+        active_memory_notes: notesRes.results,
+        readiness: {
+          ...readinessBaseline,
+          body_battery_7d_avg: bodyBattery7dAvg,
+          biometrics_days_available: biometricsRes.results.length,
+        },
+        training_load: {
+          current_pmc: {
+            day: latestPmc?.day ?? null,
+            ctl: latestPmc?.ctl ?? 0,
+            atl: latestPmc?.atl ?? 0,
+            tsb: latestPmc?.tsb ?? 0,
+            ramp_rate_7d: latestPmc?.ramp_rate_7d ?? 0,
+          },
+          last_7d_total_hours: Number((total7dS / 3600).toFixed(2)),
+          last_7d_total_tss: Number(total7dTss.toFixed(1)),
+          cycling_7d_hours: Number((bike7dS / 3600).toFixed(2)),
+          cycling_7d_tss: Number(bike7dTss.toFixed(1)),
+          strength_7d_sessions: strength7dSessions,
+          running_7d_km: run7dKm,
+          running_prev_7d_km: runPrev7dKm,
+          running_28d_weekly_avg_km: run28dWeeklyAvgKm,
+          running_wow_change_pct: runWowPct,
+          running_acwr: runAcwr,
+        },
+        recent_activities: recentActivities,
+        upcoming_calendar: upcomingRes.results,
+      };
+    }
+  );
+
+  registry.register(
+    "get_biometrics_history",
+    {
+      description:
+        "Returns daily readiness & recovery biometrics (HRV RMSSD, resting HR, sleep stages/score, Body Battery, stress, steps, weight) plus 7d vs baseline deltas.",
+      inputSchema: z.object({
+        days: optionalCoercedInt(7, 180),
+      }),
+    },
+    async ({ days }, env, userId) => {
+      const lookbackDays = days ?? 60;
+      const sinceDay = shiftDay(todayUtcDay(), -(lookbackDays - 1));
+      const { results } = await env.DB.prepare(
+        `SELECT user_id, day, hrv_rmssd_ms, hrv_status, resting_hr_bpm,
+                sleep_duration_s, sleep_deep_s, sleep_rem_s, sleep_light_s, sleep_awake_s, sleep_score,
+                body_battery_high, body_battery_low, body_battery_charged,
+                stress_avg, steps, spo2_avg, weight_kg, cycle_phase, source
+         FROM daily_biometrics
+         WHERE user_id = ? AND day >= ?
+         ORDER BY day ASC`
+      )
+        .bind(userId, sinceDay)
+        .all<DailyBiometricsRow>();
+
+      return {
+        days: lookbackDays,
+        since_day: sinceDay,
+        summary: computeBiometricsBaseline(results),
+        biometrics: results,
+      };
+    }
+  );
   registry.register(
     "get_athlete_context",
     {
@@ -122,40 +437,51 @@ export function registerReadTools(registry: McpToolRegistry): void {
       const { results } = await env.DB.prepare(sql).bind(...binds).all<RideRow>();
       return {
         since_day: sinceDay,
-        rides: results.map((r) => ({
-          ride_uuid: r.ride_uuid,
-          sport: r.sport,
-          sub_sport: r.sub_sport,
-          name: r.name,
-          source: r.source,
-          workout_id: r.workout_id,
-          started_at: r.started_at,
-          ride_day: r.ride_day,
-          duration_s: r.duration_s,
-          distance_m: r.distance_m,
-          elevation_gain_m: r.elevation_gain_m,
-          avg_pace_s_per_km: r.avg_pace_s_per_km,
-          gap_s_per_km: r.gap_s_per_km,
-          pa_hr_decoupling: r.pa_hr_decoupling,
-          work_kj: r.work_kj,
-          avg_power: r.avg_power,
-          np_watts: r.np_watts,
-          intensity_factor: r.intensity_factor,
-          tss: r.tss,
-          variability_index: r.variability_index,
-          avg_hr: r.avg_hr,
-          max_hr: r.max_hr,
-          efficiency_factor: r.efficiency_factor,
-          pw_hr_decoupling: r.pw_hr_decoupling,
-          hrr_60s: r.hrr_60s,
-          time_gt_90_hrmax_s: r.time_gt_90_hrmax_s,
-          avg_cadence: r.avg_cadence,
-          compliance_pct: r.compliance_pct,
-          rpe: r.rpe,
-          feel: r.feel,
-          notes: r.notes,
-          quality_flags: safeJsonParse(r.quality_flags_json, {}),
-        })),
+        rides: results.map(summarizeActivityRow),
+      };
+    }
+  );
+
+  registry.register(
+    "list_activities",
+    {
+      description:
+        "Lists multi-sport activities (cycling, running, strength, mobility) by date range or trailing days with compact physiological summaries.",
+      inputSchema: z.object({
+        start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        days: optionalCoercedInt(1, 365),
+        limit: optionalCoercedInt(1, 100),
+        sport: optionalEnum(["all", "cycling", "running", "strength", "mobility", "other"]),
+        source: optionalEnum(["all", "indoor_bridge", "manual_fit", "external_sync"]),
+      }),
+    },
+    async ({ start_date, end_date, days, limit, sport, source }, env, userId) => {
+      const effectiveLimit = limit ?? 25;
+      const sinceDay = start_date ?? shiftDay(todayUtcDay(), -((days ?? 28) - 1));
+
+      const clauses = ["user_id = ?", "ride_day >= ?"];
+      const binds: (string | number)[] = [userId, sinceDay];
+      if (end_date) {
+        clauses.push("ride_day <= ?");
+        binds.push(end_date);
+      }
+      if (sport && sport !== "all") {
+        clauses.push("sport = ?");
+        binds.push(sport);
+      }
+      if (source && source !== "all") {
+        clauses.push("source = ?");
+        binds.push(source);
+      }
+      binds.push(effectiveLimit);
+
+      const sql = `SELECT * FROM rides WHERE ${clauses.join(" AND ")} ORDER BY started_at DESC LIMIT ?`;
+      const { results } = await env.DB.prepare(sql).bind(...binds).all<RideRow>();
+      return {
+        start_date: sinceDay,
+        end_date: end_date ?? todayUtcDay(),
+        activities: results.map(summarizeActivityRow),
       };
     }
   );
@@ -170,61 +496,26 @@ export function registerReadTools(registry: McpToolRegistry): void {
       }),
     },
     async ({ ride_uuid }, env, userId) => {
-      const ride = await env.DB.prepare(
-        "SELECT * FROM rides WHERE ride_uuid = ? AND user_id = ?"
-      )
-        .bind(ride_uuid, userId)
-        .first<RideRow>();
+      return fetchActivityDetail(env, userId, ride_uuid);
+    }
+  );
 
-      if (!ride) {
-        throw new Error(`Ride not found: ${ride_uuid}`);
+  registry.register(
+    "get_activity_detail",
+    {
+      description:
+        "Multi-sport activity detail tool returning full metrics, activity_laps splits (km/lap pace, GAP, HR, cadence, elevation), intervals, peaks, and linked workout.",
+      inputSchema: z.object({
+        activity_uuid: z.string().uuid().optional(),
+        ride_uuid: z.string().uuid().optional(),
+      }),
+    },
+    async ({ activity_uuid, ride_uuid }, env, userId) => {
+      const targetId = activity_uuid ?? ride_uuid;
+      if (!targetId) {
+        throw new Error("Either activity_uuid or ride_uuid is required");
       }
-
-      const [intervalsRes, peaksRes, lapsRes] = await Promise.all([
-        env.DB.prepare(
-          "SELECT * FROM ride_intervals WHERE ride_uuid = ? ORDER BY step_index ASC"
-        )
-          .bind(ride_uuid)
-          .all(),
-        env.DB.prepare("SELECT * FROM ride_peaks WHERE ride_uuid = ? ORDER BY duration_s ASC")
-          .bind(ride_uuid)
-          .all(),
-        env.DB.prepare(
-          "SELECT * FROM activity_laps WHERE ride_uuid = ? AND user_id = ? ORDER BY lap_index ASC"
-        )
-          .bind(ride_uuid, userId)
-          .all(),
-      ]);
-
-      const linkedWorkout = ride.workout_id
-        ? await env.DB.prepare(
-            "SELECT id, name, sport, category, spec_json FROM workouts WHERE id = ? AND user_id = ?"
-          )
-            .bind(ride.workout_id, userId)
-            .first<{ id: string; name: string; sport: string; category: string; spec_json: string }>()
-        : null;
-
-      return {
-        ride: {
-          ...ride,
-          power_zones: safeJsonParse(ride.power_zones_json, {}),
-          hr_zones: safeJsonParse(ride.hr_zones_json, {}),
-          quality_flags: safeJsonParse(ride.quality_flags_json, {}),
-          running_dynamics: safeJsonParse(ride.running_dynamics_json, {}),
-        },
-        intervals: intervalsRes.results,
-        peaks: peaksRes.results,
-        laps: lapsRes.results,
-        workout: linkedWorkout
-          ? {
-              id: linkedWorkout.id,
-              name: linkedWorkout.name,
-              sport: linkedWorkout.sport,
-              category: linkedWorkout.category,
-              spec: safeJsonParse(linkedWorkout.spec_json, null),
-            }
-          : null,
-      };
+      return fetchActivityDetail(env, userId, targetId);
     }
   );
 

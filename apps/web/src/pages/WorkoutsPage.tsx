@@ -1,10 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  RunWorkoutSpecSchema,
+  StrengthWorkoutSpecSchema,
   WORKOUT_CATEGORIES,
   WorkoutSpecSchema,
+  flattenRunWorkout,
   flattenWorkout,
   importWorkoutFile,
+  predictRunWorkoutLoad,
+  predictStrengthWorkoutLoad,
+  type FlattenedRunStep,
   type FlattenedStep,
+  type RunWorkoutLoadPrediction,
+  type RunWorkoutSpec,
+  type StrengthWorkoutLoadPrediction,
+  type StrengthWorkoutSpec,
   type WorkoutCategory,
   type WorkoutSpec,
 } from "@paincave/shared";
@@ -13,12 +23,44 @@ import { WorkoutProfileSvg } from "../components/LiveWorkoutChart.js";
 
 interface WorkoutsPageProps {
   ftpWatts: number;
+  thresholdPaceSPerKm?: number | null;
+  indoorTrainerEnabled?: boolean;
   onLoadWorkout: (workoutId: string) => Promise<void>;
 }
 
+type SportFilter = "all" | "cycling" | "running" | "strength";
 type DurationFilter = "all" | "short" | "medium" | "long";
 type SortOption = "newest" | "duration_asc" | "duration_desc" | "tss_desc" | "if_desc" | "name_asc";
 type ViewMode = "grouped" | "flat";
+
+const SPORT_BADGE_META: Record<
+  "cycling" | "running" | "strength" | "mobility",
+  { label: string; badgeClass: string }
+> = {
+  cycling: {
+    label: "Cycling",
+    badgeClass: "border-orange-500/30 bg-orange-500/15 text-orange-300",
+  },
+  running: {
+    label: "Running",
+    badgeClass: "border-emerald-500/30 bg-emerald-500/15 text-emerald-300",
+  },
+  strength: {
+    label: "Strength",
+    badgeClass: "border-violet-500/30 bg-violet-500/15 text-violet-300",
+  },
+  mobility: {
+    label: "Mobility",
+    badgeClass: "border-sky-500/30 bg-sky-500/15 text-sky-300",
+  },
+};
+
+function formatPaceMinKm(secPerKm: number): string {
+  if (!Number.isFinite(secPerKm) || secPerKm <= 0) return "--";
+  const mins = Math.floor(secPerKm / 60);
+  const secs = Math.round(secPerKm % 60);
+  return `${mins}:${String(secs).padStart(2, "0")}/km`;
+}
 
 interface CategoryMeta {
   label: string;
@@ -167,15 +209,27 @@ function localTodayIso(): string {
 
 interface ParsedWorkoutItem {
   record: WorkoutRecord;
+  sport: "cycling" | "running" | "strength" | "mobility";
   spec: WorkoutSpec | null;
   steps: FlattenedStep[];
+  runSpec: RunWorkoutSpec | null;
+  runSteps: FlattenedRunStep[];
+  runPred: RunWorkoutLoadPrediction | null;
+  strengthSpec: StrengthWorkoutSpec | null;
+  strengthPred: StrengthWorkoutLoadPrediction | null;
   categoryMeta: CategoryMeta;
 }
 
-export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
+export function WorkoutsPage({
+  ftpWatts,
+  thresholdPaceSPerKm = null,
+  indoorTrainerEnabled = true,
+  onLoadWorkout,
+}: WorkoutsPageProps) {
   const [workouts, setWorkouts] = useState<WorkoutRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [selectedSport, setSelectedSport] = useState<SportFilter>("all");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [durationFilter, setDurationFilter] = useState<DurationFilter>("all");
   const [sortBy, setSortBy] = useState<SortOption>("newest");
@@ -220,21 +274,67 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
     return workouts.map((record) => {
       let spec: WorkoutSpec | null = null;
       let steps: FlattenedStep[] = [];
+      let runSpec: RunWorkoutSpec | null = null;
+      let runSteps: FlattenedRunStep[] = [];
+      let runPred: RunWorkoutLoadPrediction | null = null;
+      let strengthSpec: StrengthWorkoutSpec | null = null;
+      let strengthPred: StrengthWorkoutLoadPrediction | null = null;
+      let sport: ParsedWorkoutItem["sport"] = record.sport ?? "cycling";
+
       try {
-        spec = WorkoutSpecSchema.parse(JSON.parse(record.spec_json));
-        steps = flattenWorkout(spec, ftpWatts);
+        const raw: unknown = JSON.parse(record.spec_json);
+        const runParsed = RunWorkoutSpecSchema.safeParse(raw);
+        if (runParsed.success) {
+          sport = "running";
+          runSpec = runParsed.data;
+          runSteps = flattenRunWorkout(runSpec, thresholdPaceSPerKm ?? undefined);
+          runPred = predictRunWorkoutLoad(runSpec, thresholdPaceSPerKm ?? undefined);
+        } else {
+          const strengthParsed = StrengthWorkoutSpecSchema.safeParse(raw);
+          if (strengthParsed.success) {
+            sport = "strength";
+            strengthSpec = strengthParsed.data;
+            strengthPred = predictStrengthWorkoutLoad(strengthSpec);
+          } else {
+            const cyclingParsed = WorkoutSpecSchema.safeParse(raw);
+            if (cyclingParsed.success) {
+              sport = "cycling";
+              spec = cyclingParsed.data;
+              steps = flattenWorkout(spec, ftpWatts);
+            }
+          }
+        }
       } catch {
-        spec = null;
-        steps = [];
+        // leave parsed specs null
       }
+
       return {
         record,
+        sport,
         spec,
         steps,
+        runSpec,
+        runSteps,
+        runPred,
+        strengthSpec,
+        strengthPred,
         categoryMeta: getCategoryMeta(record.category),
       };
     });
-  }, [workouts, ftpWatts]);
+  }, [workouts, ftpWatts, thresholdPaceSPerKm]);
+
+  const sportCounts = useMemo(() => {
+    const counts = { cycling: 0, running: 0, strength: 0 };
+    for (const item of parsedItems) {
+      if (item.sport === "cycling") counts.cycling++;
+      else if (item.sport === "running") counts.running++;
+      else if (item.sport === "strength") counts.strength++;
+    }
+    return counts;
+  }, [parsedItems]);
+
+  const hasMultipleSports =
+    [sportCounts.cycling, sportCounts.running, sportCounts.strength].filter((c) => c > 0).length > 1;
 
   // Compute category counts from the full library in canonical physiological order
   const categorySummaries = useMemo(() => {
@@ -266,7 +366,10 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
 
   const filteredAndSorted = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const matches = parsedItems.filter(({ record, categoryMeta }) => {
+    const matches = parsedItems.filter(({ record, sport, categoryMeta }) => {
+      if (selectedSport !== "all" && sport !== selectedSport) {
+        return false;
+      }
       if (selectedCategory !== "all" && record.category !== selectedCategory) {
         return false;
       }
@@ -278,6 +381,7 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
         record.name.toLowerCase().includes(query) ||
         record.description.toLowerCase().includes(query) ||
         record.category.toLowerCase().includes(query) ||
+        sport.toLowerCase().includes(query) ||
         categoryMeta.label.toLowerCase().includes(query)
       );
     });
@@ -307,7 +411,7 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
       }
     });
     return sorted;
-  }, [parsedItems, search, selectedCategory, durationFilter, sortBy]);
+  }, [parsedItems, search, selectedSport, selectedCategory, durationFilter, sortBy]);
 
   const groupedSections = useMemo(() => {
     const groups = new Map<string, ParsedWorkoutItem[]>();
@@ -332,11 +436,15 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
   }, [filteredAndSorted]);
 
   const hasActiveFilters =
-    search.trim().length > 0 || selectedCategory !== "all" || durationFilter !== "all";
+    search.trim().length > 0 ||
+    selectedSport !== "all" ||
+    selectedCategory !== "all" ||
+    durationFilter !== "all";
   const showGroupedSections = viewMode === "grouped" && selectedCategory === "all";
 
   const resetFilters = () => {
     setSearch("");
+    setSelectedSport("all");
     setSelectedCategory("all");
     setDurationFilter("all");
   };
@@ -476,10 +584,21 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
   };
 
   const renderCard = (item: ParsedWorkoutItem) => {
-    const { record: w, steps, categoryMeta } = item;
+    const {
+      record: w,
+      sport,
+      steps,
+      runSpec,
+      runSteps,
+      runPred,
+      strengthSpec,
+      strengthPred,
+      categoryMeta,
+    } = item;
     const currentCategoryValue: WorkoutCategory = isWorkoutCategory(w.category)
       ? w.category
       : "custom";
+    const sportMeta = SPORT_BADGE_META[sport];
 
     return (
       <article
@@ -491,6 +610,11 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${sportMeta.badgeClass}`}
+                >
+                  {sportMeta.label}
+                </span>
                 <span
                   className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${categoryMeta.badgeClass}`}
                 >
@@ -517,39 +641,122 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
               >
                 Schedule
               </button>
-              <button
-                type="button"
-                onClick={() => void handleLoad(w.id)}
-                disabled={loadingWorkoutId === w.id}
-                className="rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {loadingWorkoutId === w.id ? "Loading..." : "Load on Trainer"}
-              </button>
+              {sport === "cycling" && indoorTrainerEnabled && (
+                <button
+                  type="button"
+                  onClick={() => void handleLoad(w.id)}
+                  disabled={loadingWorkoutId === w.id}
+                  className="rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {loadingWorkoutId === w.id ? "Loading..." : "Load on Trainer"}
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 rounded-xl bg-zinc-950/70 px-3 py-2 text-xs">
-            <div>
-              <span className="text-[10px] uppercase tracking-wider text-zinc-500">NP</span>
-              <div className="font-semibold tabular-nums text-zinc-100">
-                {w.predicted_np !== null ? `${w.predicted_np} W` : "--"}
+          {sport === "running" && runSpec && runPred ? (
+            <>
+              <div className="grid grid-cols-3 gap-2 rounded-xl bg-zinc-950/70 px-3 py-2 text-xs">
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-500">Est. Dist</span>
+                  <div className="font-semibold tabular-nums text-zinc-100">
+                    {(runPred.distance_m / 1000).toFixed(1)} km
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-500">Avg Pace</span>
+                  <div className="font-semibold tabular-nums text-zinc-100">
+                    {formatPaceMinKm(runPred.avg_pace_s_per_km)}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-500">rTSS</span>
+                  <div className="font-semibold tabular-nums text-emerald-300">
+                    {Math.round(runPred.tss)}
+                  </div>
+                </div>
               </div>
-            </div>
-            <div>
-              <span className="text-[10px] uppercase tracking-wider text-zinc-500">IF</span>
-              <div className="font-semibold tabular-nums text-zinc-100">
-                {w.predicted_if !== null ? w.predicted_if.toFixed(2) : "--"}
+              <div className="space-y-1 rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-2.5 text-xs">
+                {runSteps.slice(0, 5).map((step) => (
+                  <div key={step.step_index} className="flex items-center justify-between gap-2">
+                    <span className="truncate text-zinc-200">{step.label}</span>
+                    <span className="shrink-0 font-mono text-[11px] text-zinc-400">
+                      {step.distance_m >= 500 && step.type === "interval"
+                        ? `${(step.distance_m / 1000).toFixed(2)}km`
+                        : `${Math.round(step.duration_s / 60)}m`}
+                      {" · "}
+                      {step.pace_zone ?? formatPaceMinKm(step.target_pace_s_per_km)}
+                    </span>
+                  </div>
+                ))}
+                {runSteps.length > 5 && (
+                  <div className="text-[11px] text-zinc-500">+{runSteps.length - 5} more steps</div>
+                )}
               </div>
-            </div>
-            <div>
-              <span className="text-[10px] uppercase tracking-wider text-zinc-500">TSS</span>
-              <div className="font-semibold tabular-nums text-orange-300">
-                {w.predicted_tss !== null ? Math.round(w.predicted_tss) : "--"}
+            </>
+          ) : sport === "strength" && strengthSpec && strengthPred ? (
+            <>
+              <div className="grid grid-cols-3 gap-2 rounded-xl bg-zinc-950/70 px-3 py-2 text-xs">
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-500">Blocks</span>
+                  <div className="font-semibold tabular-nums text-zinc-100">
+                    {strengthSpec.blocks.length}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-500">Total Sets</span>
+                  <div className="font-semibold tabular-nums text-zinc-100">
+                    {strengthPred.total_sets}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-500">Est. Load</span>
+                  <div className="font-semibold tabular-nums text-violet-300">
+                    {Math.round(strengthPred.tss)}
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+              <div className="space-y-1 rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-2.5 text-xs">
+                {strengthSpec.blocks
+                  .flatMap((b) => b.exercises)
+                  .slice(0, 5)
+                  .map((ex, idx) => (
+                    <div key={`${ex.name}-${idx}`} className="flex items-center justify-between gap-2">
+                      <span className="truncate text-zinc-200">{ex.name}</span>
+                      <span className="shrink-0 font-mono text-[11px] text-zinc-400">
+                        {ex.sets}×{ex.reps}
+                        {ex.target_rpe_or_rir ? ` · ${ex.target_rpe_or_rir}` : ""}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-2 rounded-xl bg-zinc-950/70 px-3 py-2 text-xs">
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-500">NP</span>
+                  <div className="font-semibold tabular-nums text-zinc-100">
+                    {w.predicted_np !== null ? `${w.predicted_np} W` : "--"}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-500">IF</span>
+                  <div className="font-semibold tabular-nums text-zinc-100">
+                    {w.predicted_if !== null ? w.predicted_if.toFixed(2) : "--"}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-500">TSS</span>
+                  <div className="font-semibold tabular-nums text-orange-300">
+                    {w.predicted_tss !== null ? Math.round(w.predicted_tss) : "--"}
+                  </div>
+                </div>
+              </div>
 
-          {steps.length > 0 && <WorkoutProfileSvg steps={steps} ftpWatts={ftpWatts} height={68} />}
+              {steps.length > 0 && <WorkoutProfileSvg steps={steps} ftpWatts={ftpWatts} height={68} />}
+            </>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-800/80 pt-2.5 text-xs text-zinc-400">
@@ -579,17 +786,28 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
 
           <div className="flex items-center gap-3">
             <a
-              href={`/api/workouts/${encodeURIComponent(w.id)}/export.zwo`}
-              className="text-zinc-400 underline-offset-2 hover:text-white hover:underline"
+              href={`/api/workouts/${encodeURIComponent(w.id)}/export.fit`}
+              className="font-medium text-emerald-400/90 underline-offset-2 hover:text-emerald-300 hover:underline"
+              title="Download Garmin .FIT workout file"
             >
-              .zwo
+              .fit
             </a>
-            <a
-              href={`/api/workouts/${encodeURIComponent(w.id)}/export.erg`}
-              className="text-zinc-400 underline-offset-2 hover:text-white hover:underline"
-            >
-              .erg
-            </a>
+            {sport === "cycling" && (
+              <>
+                <a
+                  href={`/api/workouts/${encodeURIComponent(w.id)}/export.zwo`}
+                  className="text-zinc-400 underline-offset-2 hover:text-white hover:underline"
+                >
+                  .zwo
+                </a>
+                <a
+                  href={`/api/workouts/${encodeURIComponent(w.id)}/export.erg`}
+                  className="text-zinc-400 underline-offset-2 hover:text-white hover:underline"
+                >
+                  .erg
+                </a>
+              </>
+            )}
             <button
               type="button"
               onClick={() => void handleDelete(w)}
@@ -694,9 +912,43 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
         </div>
       </div>
 
-      {/* Category & Duration Filter Strip */}
+      {/* Sport, Category & Duration Filter Strip */}
       {!loading && workouts.length > 0 && (
         <div className="space-y-2.5 rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-3.5">
+          {hasMultipleSports && (
+            <div className="flex flex-wrap items-center gap-1.5 border-b border-zinc-800/70 pb-2.5" role="group" aria-label="Filter by sport">
+              <span className="mr-1 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                Sport
+              </span>
+              {(["all", "cycling", "running", "strength"] as const).map((sp) => {
+                const active = selectedSport === sp;
+                const count =
+                  sp === "all"
+                    ? workouts.length
+                    : sportCounts[sp];
+                if (sp !== "all" && count === 0) return null;
+                return (
+                  <button
+                    key={sp}
+                    type="button"
+                    onClick={() => setSelectedSport(sp)}
+                    aria-pressed={active}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                      active
+                        ? "border-orange-500 bg-orange-500 text-zinc-950"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700 hover:text-white"
+                    }`}
+                  >
+                    {sp === "all" ? "All Sports" : SPORT_BADGE_META[sp].label}
+                    <span className="rounded-full bg-zinc-950/30 px-1.5 text-[10px] tabular-nums">
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by category">
             <button
               type="button"

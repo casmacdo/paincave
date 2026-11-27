@@ -228,9 +228,19 @@ export function App() {
             sendCommand={(cmd) => bridgeClient.send(cmd)}
           />
         )}
-        {tab === "calendar" && <CalendarPage onLoadWorkout={handleLoadWorkoutOnTrainer} />}
+        {tab === "calendar" && (
+          <CalendarPage
+            indoorTrainerEnabled={indoorTrainerEnabled}
+            onLoadWorkout={handleLoadWorkoutOnTrainer}
+          />
+        )}
         {tab === "workouts" && (
-          <WorkoutsPage ftpWatts={ftpWatts} onLoadWorkout={handleLoadWorkoutOnTrainer} />
+          <WorkoutsPage
+            ftpWatts={ftpWatts}
+            thresholdPaceSPerKm={thresholds?.threshold_pace_s_per_km ?? null}
+            indoorTrainerEnabled={indoorTrainerEnabled}
+            onLoadWorkout={handleLoadWorkoutOnTrainer}
+          />
         )}
         {tab === "routes" && indoorTrainerEnabled && (
           <RoutesPage

@@ -91,3 +91,15 @@ This file is an append-only handoff log maintained by `scripts/update-task.mjs` 
 
 ## 2026-11-27 17:56 UTC — M10-02 (`pending` -> `done`)
 - Built shared Strava/Garmin archive parsers and local CLI scripts/import-archive.ts with unit tests
+
+## 2026-11-27 18:03 UTC — M11-01 (`pending` -> `done`)
+- Added Running and Strength WorkoutSpec schemas, sport-specific guardrails, multi-sport workouts service, and PWA cards
+
+## 2026-11-27 18:08 UTC — M11-02 (`pending` -> `done`)
+- Added get_health_and_training_brief, get_biometrics_history, list_activities, get_activity_detail, multi-sport create_workout, and LLM memory note MCP tools
+
+## 2026-11-27 18:11 UTC — M11-03 (`pending` -> `done`)
+- Implemented pure-TypeScript Garmin .FIT Workout binary encoder, /api/workouts/:id/export.fit endpoints, and 1-click .fit download in WorkoutsPage
+
+## 2026-11-27 18:15 UTC — M11-04 (`pending` -> `done`)
+- Extended vertical E2E loop for two isolated users (cycling bridge + Garmin runner/strength/.FIT export) on isolated ports and passed full strict verification

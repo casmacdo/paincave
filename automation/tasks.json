@@ -689,7 +689,7 @@
       "id": "M11-01",
       "milestone": "M11",
       "title": "Add Running and Strength WorkoutSpec schemas, sport-specific guardrails, and PWA calendar/workout cards",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M8-03",
         "M9-01"
@@ -709,13 +709,15 @@
         "Existing cycling WorkoutSpec schema_version 1 and trainer-bridge compatibility remain 100% intact",
         "PWA Workouts and Calendar pages render cycling, running, and strength sessions cleanly with sport badges"
       ],
-      "verify_cmd": "./scripts/verify.sh --strict"
+      "verify_cmd": "./scripts/verify.sh --strict",
+      "notes": "Added Running and Strength WorkoutSpec schemas, sport-specific guardrails, multi-sport workouts service, and PWA cards",
+      "updated_at": "2026-11-27T18:03:32.851Z"
     },
     {
       "id": "M11-02",
       "milestone": "M11",
       "title": "Upgrade Remote MCP with get_health_and_training_brief, get_biometrics_history, list_activities, get_activity_detail (laps), and LLM memory tools",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M9-03",
         "M10-01",
@@ -732,13 +734,15 @@
         "save_memory_note / update_memory_note / archive_memory_note let LLMs record subjective context, niggles, and preferences without manual UI forms",
         "create_workout and schedule_workout support cycling, running, and strength specs per userId"
       ],
-      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test",
+      "notes": "Added get_health_and_training_brief, get_biometrics_history, list_activities, get_activity_detail, multi-sport create_workout, and LLM memory note MCP tools",
+      "updated_at": "2026-11-27T18:08:26.428Z"
     },
     {
       "id": "M11-03",
       "milestone": "M11",
       "title": "Implement pure-TypeScript Garmin .FIT Workout binary encoder and 1-click download",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M11-01"
       ],
@@ -754,13 +758,15 @@
         "Workouts UI exposes 1-click Download .FIT Workout for cycling, running, and strength workouts",
         "Unit tests verify binary FIT header, CRC-16 integrity, step duration/distance/target encoding, and repeat block expansion"
       ],
-      "verify_cmd": "./scripts/verify.sh --strict"
+      "verify_cmd": "./scripts/verify.sh --strict",
+      "notes": "Implemented pure-TypeScript Garmin .FIT Workout binary encoder, /api/workouts/:id/export.fit endpoints, and 1-click .fit download in WorkoutsPage",
+      "updated_at": "2026-11-27T18:11:40.989Z"
     },
     {
       "id": "M11-04",
       "milestone": "M11",
       "title": "Extend vertical simulation E2E loop (scripts/sim-e2e.sh) for two isolated users (cycling bridge + Garmin runner) and pass full strict verification",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M10-02",
         "M11-02",
@@ -775,7 +781,9 @@
         "Asserts zero cross-user data leakage across REST and MCP endpoints",
         "Passes ./scripts/sim-e2e.sh, ./scripts/verify.sh --strict, npm run build, and wrangler deploy --dry-run"
       ],
-      "verify_cmd": "./scripts/sim-e2e.sh && ./scripts/verify.sh --strict"
+      "verify_cmd": "./scripts/sim-e2e.sh && ./scripts/verify.sh --strict",
+      "notes": "Extended vertical E2E loop for two isolated users (cycling bridge + Garmin runner/strength/.FIT export) on isolated ports and passed full strict verification",
+      "updated_at": "2026-11-27T18:15:21.383Z"
     }
   ]
 }

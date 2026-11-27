@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { WorkoutSpecSchema, computeDailyPmc } from "@paincave/shared";
+import { AnyWorkoutSpecSchema, computeDailyPmc } from "@paincave/shared";
 import { optionalCoercedBoolean, type McpToolRegistry } from "./protocol.js";
 import { saveValidatedWorkout, scheduleWorkoutSession } from "../lib/workouts-service.js";
 import { todayUtcDay } from "../lib/pmc-store.js";
@@ -24,9 +24,9 @@ export function registerWriteTools(registry: McpToolRegistry): void {
     "create_workout",
     {
       description:
-        "Validates a canonical WorkoutSpec JSON against hard physiological guardrails, computes deterministic duration/NP/IF/TSS/zones, and persists it (unless dry_run=true).",
+        "Validates a canonical WorkoutSpec JSON (cycling, running, or strength) against sport-specific physiological guardrails, computes deterministic load predictions, and persists it (unless dry_run=true).",
       inputSchema: z.object({
-        spec: WorkoutSpecSchema,
+        spec: AnyWorkoutSpecSchema,
         dry_run: optionalCoercedBoolean(),
       }),
     },
@@ -42,6 +42,7 @@ export function registerWriteTools(registry: McpToolRegistry): void {
       }
       return {
         workout_id: res.workout_id,
+        sport: res.sport,
         name: res.spec.name,
         dry_run: res.dry_run,
         predicted: res.predicted,
@@ -54,10 +55,10 @@ export function registerWriteTools(registry: McpToolRegistry): void {
     "update_workout",
     {
       description:
-        "Updates an existing saved workout with guardrail validation and deterministic load predictions.",
+        "Updates an existing saved workout (cycling, running, or strength) with guardrail validation and deterministic load predictions.",
       inputSchema: z.object({
         workout_id: z.string().min(1),
-        spec: WorkoutSpecSchema,
+        spec: AnyWorkoutSpecSchema,
         dry_run: optionalCoercedBoolean(),
       }),
     },
@@ -74,6 +75,7 @@ export function registerWriteTools(registry: McpToolRegistry): void {
       }
       return {
         workout_id: res.workout_id,
+        sport: res.sport,
         name: res.spec.name,
         dry_run: res.dry_run,
         predicted: res.predicted,
@@ -149,6 +151,7 @@ export function registerWriteTools(registry: McpToolRegistry): void {
       return {
         session: res.session,
         workout_name: res.workout.name,
+        sport: res.workout.sport,
         predicted_tss: res.workout.predicted_tss,
         projected_pmc_on_date: onDate,
         warnings: res.warnings,
@@ -275,6 +278,92 @@ export function registerWriteTools(registry: McpToolRegistry): void {
         .bind(id, userId)
         .first();
       return { block };
+    }
+  );
+
+  registry.register(
+    "save_memory_note",
+    {
+      description:
+        "Stores a durable athlete health/training memory note (injury, soreness, preference, equipment, schedule, response, health) shared by the user in chat so future LLM sessions remember it without manual forms.",
+      inputSchema: CoachingNoteInputSchema,
+    },
+    async ({ category, sport, content }, env, userId) => {
+      const id = crypto.randomUUID();
+      await env.DB.prepare(
+        "INSERT INTO coaching_notes (id, user_id, category, sport, content, active) VALUES (?, ?, ?, ?, ?, 1)"
+      )
+        .bind(id, userId, category, sport ?? null, content)
+        .run();
+      const note = await env.DB.prepare(
+        "SELECT * FROM coaching_notes WHERE id = ? AND user_id = ?"
+      )
+        .bind(id, userId)
+        .first();
+      return { note };
+    }
+  );
+
+  registry.register(
+    "update_memory_note",
+    {
+      description:
+        "Updates an existing durable athlete memory note (category, sport, or content) for the authenticated user.",
+      inputSchema: z.object({
+        note_id: z.string().min(1),
+        category: CoachingNoteInputSchema.shape.category.optional(),
+        sport: CoachingNoteInputSchema.shape.sport,
+        content: z.string().trim().min(1).max(1000).optional(),
+      }),
+    },
+    async ({ note_id, category, sport, content }, env, userId) => {
+      const current = await env.DB.prepare(
+        "SELECT * FROM coaching_notes WHERE id = ? AND user_id = ?"
+      )
+        .bind(note_id, userId)
+        .first<{ category: string; sport: string | null; content: string }>();
+      if (!current) {
+        throw new Error(`Memory note not found: ${note_id}`);
+      }
+      await env.DB.prepare(
+        `UPDATE coaching_notes
+         SET category = ?, sport = ?, content = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+         WHERE id = ? AND user_id = ?`
+      )
+        .bind(
+          category ?? current.category,
+          sport !== undefined ? sport : current.sport,
+          content ?? current.content,
+          note_id,
+          userId
+        )
+        .run();
+      const note = await env.DB.prepare(
+        "SELECT * FROM coaching_notes WHERE id = ? AND user_id = ?"
+      )
+        .bind(note_id, userId)
+        .first();
+      return { note };
+    }
+  );
+
+  registry.register(
+    "archive_memory_note",
+    {
+      description:
+        "Archives a resolved or outdated athlete memory note so it no longer appears in get_health_and_training_brief.",
+      inputSchema: z.object({
+        note_id: z.string().min(1),
+      }),
+    },
+    async ({ note_id }, env, userId) => {
+      const res = await env.DB.prepare(
+        "UPDATE coaching_notes SET active = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND user_id = ?"
+      )
+        .bind(note_id, userId)
+        .run();
+      if ((res.meta.changes ?? 0) === 0) throw new Error(`Memory note not found: ${note_id}`);
+      return { ok: true, note_id };
     }
   );
 

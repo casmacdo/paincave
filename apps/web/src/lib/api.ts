@@ -1,4 +1,9 @@
-import type { FlattenedStep, RideUploadSummary, RoutePoint, WorkoutSpec } from "@paincave/shared";
+import type {
+  AnyWorkoutSpec,
+  FlattenedStep,
+  RideUploadSummary,
+  RoutePoint,
+} from "@paincave/shared";
 
 export interface AuthProvidersInfo {
   email_password: boolean;
@@ -60,6 +65,7 @@ export interface DeviceTokenRecord {
 
 export interface WorkoutRecord {
   id: string;
+  sport?: "cycling" | "running" | "strength" | "mobility";
   name: string;
   description: string;
   category: string;
@@ -80,6 +86,7 @@ export interface PlannedSessionRecord {
   coach_rationale: string;
   completed_ride_uuid: string | null;
   workout_name: string;
+  workout_sport?: "cycling" | "running" | "strength" | "mobility";
   workout_category: string;
   planned_duration_s: number;
   predicted_if: number | null;
@@ -88,12 +95,15 @@ export interface PlannedSessionRecord {
 
 export interface RideRecord {
   ride_uuid: string;
+  sport?: string;
   name: string;
   source: string;
   workout_id: string | null;
   started_at: string;
   ride_day: string;
   duration_s: number;
+  distance_m?: number | null;
+  avg_pace_s_per_km?: number | null;
   work_kj: number;
   avg_power: number | null;
   np_watts: number | null;
@@ -228,7 +238,7 @@ export const api = {
   getNotes: () => requestJson<{ notes: { id: string; category: string; content: string }[] }>("/api/athlete/notes"),
 
   getWorkouts: () => requestJson<{ workouts: WorkoutRecord[] }>("/api/workouts"),
-  createWorkout: (spec: WorkoutSpec, source?: "user" | "import") =>
+  createWorkout: (spec: AnyWorkoutSpec, source?: "user" | "import") =>
     requestJson<{ workout: WorkoutRecord; warnings?: string[] }>(
       source === "import" ? "/api/workouts?source=import" : "/api/workouts",
       {
@@ -237,7 +247,7 @@ export const api = {
         body: JSON.stringify(spec),
       }
     ),
-  updateWorkout: (id: string, spec: WorkoutSpec) =>
+  updateWorkout: (id: string, spec: AnyWorkoutSpec) =>
     requestJson<{ workout: WorkoutRecord }>(`/api/workouts/${encodeURIComponent(id)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },

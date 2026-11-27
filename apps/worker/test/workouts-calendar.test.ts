@@ -1,5 +1,6 @@
 import { exports } from "cloudflare:workers";
 import { describe, it, expect } from "vitest";
+import { decodeFitWorkout } from "@paincave/shared";
 
 async function loginCookie(): Promise<string> {
   const res = await exports.default.fetch("https://paincave.test/api/auth/login", {
@@ -94,6 +95,28 @@ describe("Workouts & Calendar API", () => {
     );
     expect(ergRes.status).toBe(200);
     expect(await ergRes.text()).toContain("FTP = 260");
+
+    const fitRes = await exports.default.fetch(
+      `https://paincave.test/api/workouts/${workout.id}/export.fit`,
+      { headers: { Cookie: cookie } }
+    );
+    expect(fitRes.status).toBe(200);
+    expect(fitRes.headers.get("Content-Type")).toContain("application/vnd.ant.fit");
+    const fitDecoded = decodeFitWorkout(new Uint8Array(await fitRes.arrayBuffer()));
+    expect(fitDecoded.validHeader).toBe(true);
+    expect(fitDecoded.validHeaderCrc).toBe(true);
+    expect(fitDecoded.validFileCrc).toBe(true);
+    expect(fitDecoded.fileType).toBe(5);
+    expect(fitDecoded.workoutName).toBe("Tuesday Sweet Spot 2x15");
+
+    const fitQueryRes = await exports.default.fetch(
+      `https://paincave.test/api/workouts/${workout.id}/export?format=fit`,
+      { headers: { Cookie: cookie } }
+    );
+    expect(fitQueryRes.status).toBe(200);
+    expect(decodeFitWorkout(new Uint8Array(await fitQueryRes.arrayBuffer())).validFileCrc).toBe(
+      true
+    );
 
     const flatRes = await exports.default.fetch(
       `https://paincave.test/api/workouts/${workout.id}/flattened`,

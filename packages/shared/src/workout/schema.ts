@@ -84,6 +84,7 @@ export const WorkoutStepSchema = z.union([AtomicStepSchema, RepeatStepSchema]);
 
 export const WorkoutSpecSchema = z.object({
   schema_version: z.literal(1),
+  sport: z.literal("cycling").optional(),
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(1000).default(""),
   category: z.enum(WORKOUT_CATEGORIES).default("custom"),

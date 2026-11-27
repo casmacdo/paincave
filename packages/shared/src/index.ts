@@ -1,6 +1,8 @@
 export const PAINCAVE_SCHEMA_VERSION = 1 as const;
 
 export * from "./workout/schema.js";
+export * from "./workout/run-schema.js";
+export * from "./workout/strength-schema.js";
 export * from "./workout/flatten.js";
 export * from "./workout/guardrails.js";
 export * from "./workout/export.js";
@@ -13,5 +15,6 @@ export * from "./physiology/metrics.js";
 export * from "./physiology/running.js";
 export * from "./protocol/bridge.js";
 export * from "./fit/reader.js";
+export * from "./fit/workout-encoder.js";
 export * from "./routes/gpx.js";
 export * from "./import/archive.js";
