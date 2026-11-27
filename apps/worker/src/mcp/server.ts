@@ -31,9 +31,10 @@ export function createMcpRoutes(): Hono<HonoAppContext> {
     }
 
     c.set("authMethod", auth.method);
+    c.set("userId", auth.userId);
 
     if (c.req.method === "POST") {
-      return handleStatelessMcpPost(c.req.raw, TOOL_REGISTRY, c.env);
+      return handleStatelessMcpPost(c.req.raw, TOOL_REGISTRY, c.env, auth.userId);
     }
     if (c.req.method === "DELETE") {
       return c.json({ ok: true }, 200);

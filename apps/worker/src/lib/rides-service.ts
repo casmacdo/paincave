@@ -1,5 +1,6 @@
 import type { RideUploadSummary } from "@paincave/shared";
 import type { AppEnv } from "../types.js";
+import { DEFAULT_OWNER_USER_ID } from "./better-auth.js";
 import { recomputePmcFromDay } from "./pmc-store.js";
 
 export interface IngestRideResult {
@@ -10,8 +11,29 @@ export interface IngestRideResult {
   strava_upload_status: string;
 }
 
+export type ActivitySport = "cycling" | "running" | "strength" | "mobility" | "other";
+
+export interface ActivityLapInput {
+  lap_index: number;
+  duration_s: number;
+  distance_m?: number | null;
+  avg_pace_s_per_km?: number | null;
+  gap_s_per_km?: number | null;
+  avg_power?: number | null;
+  avg_hr?: number | null;
+  max_hr?: number | null;
+  avg_cadence?: number | null;
+  elevation_gain_m?: number | null;
+  elevation_loss_m?: number | null;
+}
+
 export interface RideRow {
   ride_uuid: string;
+  user_id: string;
+  sport: ActivitySport;
+  sub_sport: string | null;
+  external_provider: string | null;
+  external_id: string | null;
   name: string;
   source: "indoor_bridge" | "manual_fit" | "external_sync";
   workout_id: string | null;
@@ -21,6 +43,14 @@ export interface RideRow {
   fit_bytes: number;
   duration_s: number;
   elapsed_s: number;
+  distance_m: number | null;
+  elevation_gain_m: number | null;
+  elevation_loss_m: number | null;
+  avg_pace_s_per_km: number | null;
+  gap_s_per_km: number | null;
+  pa_hr_decoupling: number | null;
+  running_dynamics_json: string;
+  threshold_pace_snapshot: number | null;
   work_kj: number;
   avg_power: number | null;
   np_watts: number | null;
@@ -53,26 +83,42 @@ export interface RideRow {
   updated_at: string;
 }
 
-export function buildFitR2Key(rideDay: string, rideUuid: string): string {
+export function buildFitR2Key(rideDay: string, rideUuid: string, userId = DEFAULT_OWNER_USER_ID): string {
   const year = rideDay.slice(0, 4);
   const month = rideDay.slice(5, 7);
-  return `fits/${year}/${month}/${rideUuid}.fit`;
+  return `users/${userId}/fits/${year}/${month}/${rideUuid}.fit`;
 }
 
 export async function ingestRide(
   env: AppEnv,
   params: {
+    userId?: string;
     summary: RideUploadSummary;
     fitBytes: Uint8Array | null;
+    sport?: ActivitySport;
+    subSport?: string | null;
+    externalProvider?: string | null;
+    externalId?: string | null;
+    distanceM?: number | null;
+    elevationGainM?: number | null;
+    elevationLossM?: number | null;
+    avgPaceSPerKm?: number | null;
+    gapSPerKm?: number | null;
+    paHrDecoupling?: number | null;
+    runningDynamics?: Record<string, unknown> | null;
+    thresholdPaceSnapshot?: number | null;
+    laps?: ActivityLapInput[];
+    skipPmcRecompute?: boolean;
   }
 ): Promise<IngestRideResult> {
   const { summary, fitBytes } = params;
+  const userId = params.userId ?? DEFAULT_OWNER_USER_ID;
 
-  // Idempotency check: duplicate upload returns existing state without re-writing R2/D1 or re-triggering Strava
-  const existing = await env.DB.prepare(
-    "SELECT ride_uuid, r2_fit_key, fit_bytes, strava_upload_status FROM rides WHERE ride_uuid = ?"
+  // Idempotency check by ride_uuid or (user_id, external_provider, external_id)
+  const existingByUuid = await env.DB.prepare(
+    "SELECT ride_uuid, r2_fit_key, fit_bytes, strava_upload_status FROM rides WHERE ride_uuid = ? AND user_id = ?"
   )
-    .bind(summary.ride_uuid)
+    .bind(summary.ride_uuid, userId)
     .first<{
       ride_uuid: string;
       r2_fit_key: string;
@@ -80,6 +126,23 @@ export async function ingestRide(
       strava_upload_status: string;
     }>();
 
+  const existingByExternal =
+    !existingByUuid && params.externalProvider && params.externalId
+      ? await env.DB.prepare(
+          `SELECT ride_uuid, r2_fit_key, fit_bytes, strava_upload_status
+           FROM rides
+           WHERE user_id = ? AND external_provider = ? AND external_id = ?`
+        )
+          .bind(userId, params.externalProvider, params.externalId)
+          .first<{
+            ride_uuid: string;
+            r2_fit_key: string;
+            fit_bytes: number;
+            strava_upload_status: string;
+          }>()
+      : null;
+
+  const existing = existingByUuid ?? existingByExternal;
   if (existing) {
     return {
       ride_uuid: existing.ride_uuid,
@@ -92,37 +155,43 @@ export async function ingestRide(
 
   let workoutId: string | null = null;
   if (summary.workout_id) {
-    const workout = await env.DB.prepare(
-      "SELECT id FROM workouts WHERE id = ?"
-    ).bind(summary.workout_id).first<{ id: string }>();
+    const workout = await env.DB.prepare("SELECT id FROM workouts WHERE id = ? AND user_id = ?")
+      .bind(summary.workout_id, userId)
+      .first<{ id: string }>();
     workoutId = workout?.id ?? null;
   }
 
   let plannedSessionId: string | null = null;
   if (summary.planned_session_id) {
     const plannedSession = await env.DB.prepare(
-      "SELECT id FROM planned_sessions WHERE id = ?"
-    ).bind(summary.planned_session_id).first<{ id: string }>();
+      "SELECT id FROM planned_sessions WHERE id = ? AND user_id = ?"
+    )
+      .bind(summary.planned_session_id, userId)
+      .first<{ id: string }>();
     plannedSessionId = plannedSession?.id ?? null;
   }
 
-  const r2Key = buildFitR2Key(summary.ride_day, summary.ride_uuid);
+  const r2Key = buildFitR2Key(summary.ride_day, summary.ride_uuid, userId);
   const fitSize = fitBytes ? fitBytes.byteLength : 0;
 
   if (fitBytes && fitBytes.byteLength > 0) {
     await env.RIDES_BUCKET.put(r2Key, fitBytes, {
       httpMetadata: { contentType: "application/vnd.ant.fit" },
       customMetadata: {
+        user_id: userId,
         ride_uuid: summary.ride_uuid,
         ride_day: summary.ride_day,
         source: summary.source,
+        sport: params.sport ?? "cycling",
       },
     });
   }
 
   const stravaConnected = await env.DB.prepare(
-    "SELECT provider FROM oauth_tokens WHERE provider = 'strava'"
-  ).first<{ provider: string }>();
+    "SELECT provider FROM provider_connections WHERE user_id = ? AND provider = 'strava'"
+  )
+    .bind(userId)
+    .first<{ provider: string }>();
 
   const stravaStatus =
     summary.source === "indoor_bridge" && stravaConnected && fitSize > 0
@@ -134,15 +203,21 @@ export async function ingestRide(
   batch.push(
     env.DB.prepare(
       `INSERT INTO rides (
-        ride_uuid, name, source, workout_id, started_at, ride_day, r2_fit_key, fit_bytes,
-        duration_s, elapsed_s, work_kj, avg_power, np_watts, intensity_factor, tss,
+        ride_uuid, user_id, sport, sub_sport, external_provider, external_id,
+        name, source, workout_id, started_at, ride_day, r2_fit_key, fit_bytes,
+        duration_s, elapsed_s, distance_m, elevation_gain_m, elevation_loss_m,
+        avg_pace_s_per_km, gap_s_per_km, pa_hr_decoupling, running_dynamics_json,
+        threshold_pace_snapshot, work_kj, avg_power, np_watts, intensity_factor, tss,
         variability_index, avg_hr, max_hr, efficiency_factor, pw_hr_decoupling, hrr_60s,
         time_gt_90_hrmax_s, avg_cadence, compliance_pct, power_zones_json, hr_zones_json,
         quality_flags_json, ftp_snapshot, lthr_snapshot, hrmax_snapshot, weight_kg_snapshot,
         rpe, feel, notes, strava_upload_status
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
@@ -150,6 +225,11 @@ export async function ingestRide(
       )`
     ).bind(
       summary.ride_uuid,
+      userId,
+      params.sport ?? "cycling",
+      params.subSport ?? null,
+      params.externalProvider ?? null,
+      params.externalId ?? null,
       summary.name,
       summary.source,
       workoutId,
@@ -159,6 +239,14 @@ export async function ingestRide(
       fitSize,
       summary.duration_s,
       summary.elapsed_s,
+      params.distanceM ?? null,
+      params.elevationGainM ?? null,
+      params.elevationLossM ?? null,
+      params.avgPaceSPerKm ?? null,
+      params.gapSPerKm ?? null,
+      params.paHrDecoupling ?? null,
+      JSON.stringify(params.runningDynamics ?? {}),
+      params.thresholdPaceSnapshot ?? null,
       summary.work_kj,
       summary.avg_power,
       summary.np_watts,
@@ -225,19 +313,46 @@ export async function ingestRide(
     );
   }
 
+  for (const lap of params.laps ?? []) {
+    batch.push(
+      env.DB.prepare(
+        `INSERT INTO activity_laps (
+          user_id, ride_uuid, lap_index, duration_s, distance_m, avg_pace_s_per_km,
+          gap_s_per_km, avg_power, avg_hr, max_hr, avg_cadence, elevation_gain_m, elevation_loss_m
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        userId,
+        summary.ride_uuid,
+        lap.lap_index,
+        lap.duration_s,
+        lap.distance_m ?? null,
+        lap.avg_pace_s_per_km ?? null,
+        lap.gap_s_per_km ?? null,
+        lap.avg_power ?? null,
+        lap.avg_hr ?? null,
+        lap.max_hr ?? null,
+        lap.avg_cadence ?? null,
+        lap.elevation_gain_m ?? null,
+        lap.elevation_loss_m ?? null
+      )
+    );
+  }
+
   if (plannedSessionId) {
     batch.push(
       env.DB.prepare(
         `UPDATE planned_sessions
          SET status = 'completed', completed_ride_uuid = ?,
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-         WHERE id = ?`
-      ).bind(summary.ride_uuid, plannedSessionId)
+         WHERE id = ? AND user_id = ?`
+      ).bind(summary.ride_uuid, plannedSessionId, userId)
     );
   }
 
   await env.DB.batch(batch);
-  await recomputePmcFromDay(env.DB, summary.ride_day);
+  if (!params.skipPmcRecompute) {
+    await recomputePmcFromDay(env.DB, summary.ride_day, userId);
+  }
 
   return {
     ride_uuid: summary.ride_uuid,

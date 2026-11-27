@@ -8,10 +8,13 @@ import {
   type WorkoutLoadPrediction,
   type WorkoutSpec,
 } from "@paincave/shared";
+import { DEFAULT_OWNER_USER_ID } from "./better-auth.js";
 import { getEffectiveFtp, type TrainingBlockRow } from "../routes/athlete.js";
 
 export interface WorkoutRow {
   id: string;
+  user_id: string;
+  sport: "cycling" | "running" | "strength" | "mobility";
   name: string;
   description: string;
   category: string;
@@ -30,6 +33,7 @@ export interface WorkoutRow {
 
 export interface PlannedSessionRow {
   id: string;
+  user_id: string;
   scheduled_date: string;
   workout_id: string;
   status: "planned" | "completed" | "skipped";
@@ -42,6 +46,7 @@ export interface PlannedSessionRow {
 export async function saveValidatedWorkout(
   db: D1Database,
   params: {
+    userId?: string;
     workoutId?: string;
     rawSpec: unknown;
     createdBy: "user" | "llm" | "import";
@@ -59,6 +64,7 @@ export async function saveValidatedWorkout(
     }
   | { ok: false; status: 400 | 404; error: string; details?: string[] }
 > {
+  const userId = params.userId ?? DEFAULT_OWNER_USER_ID;
   const parsed = WorkoutSpecSchema.safeParse(params.rawSpec);
   if (!parsed.success) {
     return {
@@ -70,7 +76,7 @@ export async function saveValidatedWorkout(
   }
 
   const spec = parsed.data;
-  const ftp = await getEffectiveFtp(db);
+  const ftp = await getEffectiveFtp(db, userId);
   const guardrails = validateWorkoutGuardrails(spec, ftp);
   if (!guardrails.valid) {
     return {
@@ -101,7 +107,7 @@ export async function saveValidatedWorkout(
          SET name = ?, description = ?, category = ?, spec_json = ?, duration_s = ?,
              predicted_np = ?, predicted_if = ?, predicted_tss = ?, zone_distribution_json = ?,
              version = version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-         WHERE id = ? AND archived = 0`
+         WHERE id = ? AND user_id = ? AND archived = 0`
       )
       .bind(
         spec.name,
@@ -113,7 +119,8 @@ export async function saveValidatedWorkout(
         guardrails.predicted.intensity_factor,
         guardrails.predicted.tss,
         JSON.stringify(guardrails.predicted.zone_seconds),
-        workoutId
+        workoutId,
+        userId
       )
       .run();
 
@@ -124,11 +131,12 @@ export async function saveValidatedWorkout(
     await db
       .prepare(
         `INSERT INTO workouts
-          (id, name, description, category, spec_json, duration_s, predicted_np, predicted_if, predicted_tss, zone_distribution_json, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, user_id, sport, name, description, category, spec_json, duration_s, predicted_np, predicted_if, predicted_tss, zone_distribution_json, created_by)
+         VALUES (?, ?, 'cycling', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         workoutId,
+        userId,
         spec.name,
         spec.description,
         spec.category,
@@ -144,8 +152,8 @@ export async function saveValidatedWorkout(
   }
 
   const row = await db
-    .prepare("SELECT * FROM workouts WHERE id = ?")
-    .bind(workoutId)
+    .prepare("SELECT * FROM workouts WHERE id = ? AND user_id = ?")
+    .bind(workoutId, userId)
     .first<WorkoutRow>();
 
   return {
@@ -164,7 +172,8 @@ const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
 export async function checkDayConstraints(
   db: D1Database,
   scheduledDate: string,
-  workoutDurationS: number
+  workoutDurationS: number,
+  userId = DEFAULT_OWNER_USER_ID
 ): Promise<string[]> {
   const warnings: string[] = [];
   const [y, m, d] = scheduledDate.split("-").map(Number);
@@ -176,10 +185,10 @@ export async function checkDayConstraints(
   const block = await db
     .prepare(
       `SELECT * FROM training_blocks
-       WHERE active = 1 AND start_date <= ? AND (end_date IS NULL OR end_date >= ?)
+       WHERE user_id = ? AND active = 1 AND start_date <= ? AND (end_date IS NULL OR end_date >= ?)
        ORDER BY start_date DESC LIMIT 1`
     )
-    .bind(scheduledDate, scheduledDate)
+    .bind(userId, scheduledDate, scheduledDate)
     .first<TrainingBlockRow>();
 
   if (!block) return warnings;
@@ -212,6 +221,7 @@ export async function checkDayConstraints(
 export async function scheduleWorkoutSession(
   db: D1Database,
   params: {
+    userId?: string;
     scheduledDate: string;
     workoutId: string;
     coachRationale?: string;
@@ -226,9 +236,10 @@ export async function scheduleWorkoutSession(
     }
   | { ok: false; status: 404 | 409; error: string }
 > {
+  const userId = params.userId ?? DEFAULT_OWNER_USER_ID;
   const workout = await db
-    .prepare("SELECT * FROM workouts WHERE id = ? AND archived = 0")
-    .bind(params.workoutId)
+    .prepare("SELECT * FROM workouts WHERE id = ? AND user_id = ? AND archived = 0")
+    .bind(params.workoutId, userId)
     .first<WorkoutRow>();
 
   if (!workout) {
@@ -237,9 +248,9 @@ export async function scheduleWorkoutSession(
 
   const existing = await db
     .prepare(
-      "SELECT * FROM planned_sessions WHERE scheduled_date = ? AND status = 'planned' LIMIT 1"
+      "SELECT * FROM planned_sessions WHERE user_id = ? AND scheduled_date = ? AND status = 'planned' LIMIT 1"
     )
-    .bind(params.scheduledDate)
+    .bind(userId, params.scheduledDate)
     .first<PlannedSessionRow>();
 
   if (existing && !params.replaceExisting) {
@@ -250,7 +261,7 @@ export async function scheduleWorkoutSession(
     };
   }
 
-  const warnings = await checkDayConstraints(db, params.scheduledDate, workout.duration_s);
+  const warnings = await checkDayConstraints(db, params.scheduledDate, workout.duration_s, userId);
   const id = crypto.randomUUID();
 
   if (existing && params.replaceExisting) {
@@ -258,28 +269,28 @@ export async function scheduleWorkoutSession(
       .prepare(
         `UPDATE planned_sessions
          SET workout_id = ?, coach_rationale = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-         WHERE id = ?`
+         WHERE id = ? AND user_id = ?`
       )
-      .bind(workout.id, params.coachRationale ?? "", existing.id)
+      .bind(workout.id, params.coachRationale ?? "", existing.id, userId)
       .run();
     const updated = await db
-      .prepare("SELECT * FROM planned_sessions WHERE id = ?")
-      .bind(existing.id)
+      .prepare("SELECT * FROM planned_sessions WHERE id = ? AND user_id = ?")
+      .bind(existing.id, userId)
       .first<PlannedSessionRow>();
     return { ok: true, session: updated, workout, warnings };
   }
 
   await db
     .prepare(
-      `INSERT INTO planned_sessions (id, scheduled_date, workout_id, status, coach_rationale)
-       VALUES (?, ?, ?, 'planned', ?)`
+      `INSERT INTO planned_sessions (id, user_id, scheduled_date, workout_id, status, coach_rationale)
+       VALUES (?, ?, ?, ?, 'planned', ?)`
     )
-    .bind(id, params.scheduledDate, workout.id, params.coachRationale ?? "")
+    .bind(id, userId, params.scheduledDate, workout.id, params.coachRationale ?? "")
     .run();
 
   const created = await db
-    .prepare("SELECT * FROM planned_sessions WHERE id = ?")
-    .bind(id)
+    .prepare("SELECT * FROM planned_sessions WHERE id = ? AND user_id = ?")
+    .bind(id, userId)
     .first<PlannedSessionRow>();
 
   return { ok: true, session: created, workout, warnings };
@@ -288,20 +299,21 @@ export async function scheduleWorkoutSession(
 export async function getWorkoutExport(
   db: D1Database,
   workoutId: string,
-  format: "zwo" | "erg" | "flattened"
+  format: "zwo" | "erg" | "flattened",
+  userId = DEFAULT_OWNER_USER_ID
 ): Promise<{
   workout: WorkoutRow;
   ftp_watts: number;
   content: string | FlattenedStep[];
 } | null> {
   const workout = await db
-    .prepare("SELECT * FROM workouts WHERE id = ?")
-    .bind(workoutId)
+    .prepare("SELECT * FROM workouts WHERE id = ? AND user_id = ?")
+    .bind(workoutId, userId)
     .first<WorkoutRow>();
   if (!workout) return null;
 
   const spec = WorkoutSpecSchema.parse(JSON.parse(workout.spec_json));
-  const ftp = await getEffectiveFtp(db);
+  const ftp = await getEffectiveFtp(db, userId);
   if (format === "zwo") {
     return { workout, ftp_watts: ftp, content: toZwoXml(spec, ftp) };
   }

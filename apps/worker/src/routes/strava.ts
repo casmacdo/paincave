@@ -37,7 +37,8 @@ export function createStravaRoutes(): Hono<HonoAppContext> {
   const router = new Hono<HonoAppContext>();
 
   router.get("/status", requireUiAuth, async (c) => {
-    const row = await getStravaTokenRow(c.env);
+    const userId = c.get("userId");
+    const row = await getStravaTokenRow(c.env, userId);
     return c.json({
       configured: isStravaConfigured(c.env),
       connected: Boolean(row),
@@ -48,6 +49,7 @@ export function createStravaRoutes(): Hono<HonoAppContext> {
   });
 
   router.get("/connect", requireBridgeOrUiAuth, async (c) => {
+    const userId = c.get("userId");
     if (!isStravaConfigured(c.env)) {
       return c.json(
         { error: "Strava integration unavailable: STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET are not set" },
@@ -65,9 +67,9 @@ export function createStravaRoutes(): Hono<HonoAppContext> {
     const nowS = Math.floor(Date.now() / 1000);
     await c.env.DB.prepare("DELETE FROM oauth_states WHERE expires_at <= ?").bind(nowS).run();
     await c.env.DB.prepare(
-      "INSERT INTO oauth_states (state_hash, provider, expires_at) VALUES (?, 'strava', ?)"
+      "INSERT INTO oauth_states (state_hash, user_id, provider, expires_at) VALUES (?, ?, 'strava', ?)"
     )
-      .bind(stateHash, nowS + STRAVA_STATE_TTL_S)
+      .bind(stateHash, userId, nowS + STRAVA_STATE_TTL_S)
       .run();
 
     const authorizeUrl = buildStravaAuthorizeUrl(c.env, callbackUrl, nonce);
@@ -93,10 +95,10 @@ export function createStravaRoutes(): Hono<HonoAppContext> {
     const nowS = Math.floor(Date.now() / 1000);
     const stateHash = await sha256Hex(state);
     const row = await c.env.DB.prepare(
-      "SELECT state_hash, expires_at FROM oauth_states WHERE state_hash = ? AND provider = 'strava'"
+      "SELECT state_hash, user_id, expires_at FROM oauth_states WHERE state_hash = ? AND provider = 'strava'"
     )
       .bind(stateHash)
-      .first<{ state_hash: string; expires_at: number }>();
+      .first<{ state_hash: string; user_id: string; expires_at: number }>();
 
     if (!row || row.expires_at <= nowS) {
       if (row) {
@@ -120,7 +122,7 @@ export function createStravaRoutes(): Hono<HonoAppContext> {
     }
 
     try {
-      await exchangeStravaCode(c.env, code);
+      await exchangeStravaCode(c.env, code, row.user_id);
       return c.redirect("/?strava=connected", 302);
     } catch (err) {
       return c.json(
@@ -131,18 +133,21 @@ export function createStravaRoutes(): Hono<HonoAppContext> {
   });
 
   router.post("/retry/:ride_uuid", requireBridgeOrUiAuth, async (c) => {
+    const userId = c.get("userId");
     const rideUuid = c.req.param("ride_uuid");
     if (!rideUuid) {
       return c.json({ error: "Missing ride_uuid" }, 400);
     }
-    const exists = await c.env.DB.prepare("SELECT ride_uuid FROM rides WHERE ride_uuid = ?")
-      .bind(rideUuid)
+    const exists = await c.env.DB.prepare(
+      "SELECT ride_uuid FROM rides WHERE ride_uuid = ? AND user_id = ?"
+    )
+      .bind(rideUuid, userId)
       .first<{ ride_uuid: string }>();
     if (!exists) {
       return c.json({ error: "Ride not found" }, 404);
     }
 
-    const result = await uploadFitToStrava(c.env, rideUuid);
+    const result = await uploadFitToStrava(c.env, rideUuid, userId);
     return c.json({ ride_uuid: rideUuid, ...result });
   });
 

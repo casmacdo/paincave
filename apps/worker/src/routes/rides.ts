@@ -28,6 +28,7 @@ export function createRideRoutes(): Hono<HonoAppContext> {
 
   // POST /api/rides allows either trainer-bridge (X-Bridge-Token) or UI session
   router.post("/", requireBridgeOrUiAuth, async (c) => {
+    const userId = c.get("userId");
     const contentType = c.req.header("Content-Type") ?? "";
     let rawSummary: unknown = null;
     let fitBytes: Uint8Array | null = null;
@@ -67,16 +68,16 @@ export function createRideRoutes(): Hono<HonoAppContext> {
     }
 
     const res = await ingestRide(c.env, {
+      userId,
       summary: parsed.data,
       fitBytes,
     });
 
     if (!res.idempotent && res.strava_upload_status === "pending") {
       try {
-        c.executionCtx.waitUntil(uploadFitToStrava(c.env, res.ride_uuid));
+        c.executionCtx.waitUntil(uploadFitToStrava(c.env, res.ride_uuid, userId));
       } catch {
-        // Direct app.fetch() without ExecutionContext in unit tests
-        await uploadFitToStrava(c.env, res.ride_uuid);
+        await uploadFitToStrava(c.env, res.ride_uuid, userId);
       }
     }
 
@@ -84,26 +85,42 @@ export function createRideRoutes(): Hono<HonoAppContext> {
   });
 
   router.get("/", requireUiAuth, async (c) => {
+    const userId = c.get("userId");
     const limit = Math.min(100, Math.max(1, Number(c.req.query("limit") ?? 25)));
     const source = c.req.query("source");
+    const sport = c.req.query("sport");
 
-    const sql =
-      source && source !== "all"
-        ? "SELECT * FROM rides WHERE source = ? ORDER BY started_at DESC LIMIT ?"
-        : "SELECT * FROM rides ORDER BY started_at DESC LIMIT ?";
+    const clauses = ["user_id = ?"];
+    const binds: (string | number)[] = [userId];
+    if (source && source !== "all") {
+      clauses.push("source = ?");
+      binds.push(source);
+    }
+    if (sport && sport !== "all") {
+      clauses.push("sport = ?");
+      binds.push(sport);
+    }
+    binds.push(limit);
 
-    const stmt =
-      source && source !== "all"
-        ? c.env.DB.prepare(sql).bind(source, limit)
-        : c.env.DB.prepare(sql).bind(limit);
-    const { results } = await stmt.all<RideRow>();
+    const sql = `SELECT * FROM rides WHERE ${clauses.join(" AND ")} ORDER BY started_at DESC LIMIT ?`;
+    const { results } = await c.env.DB.prepare(sql).bind(...binds).all<RideRow>();
     return c.json({ rides: results });
   });
 
   router.get("/:ride_uuid", requireUiAuth, async (c) => {
+    const userId = c.get("userId");
     const uuid = c.req.param("ride_uuid");
-    const [ride, intervalsRes, peaksRes] = await Promise.all([
-      c.env.DB.prepare("SELECT * FROM rides WHERE ride_uuid = ?").bind(uuid).first<RideRow>(),
+    const ride = await c.env.DB.prepare(
+      "SELECT * FROM rides WHERE ride_uuid = ? AND user_id = ?"
+    )
+      .bind(uuid, userId)
+      .first<RideRow>();
+
+    if (!ride) {
+      return c.json({ error: "Ride not found" }, 404);
+    }
+
+    const [intervalsRes, peaksRes, lapsRes] = await Promise.all([
       c.env.DB.prepare(
         "SELECT * FROM ride_intervals WHERE ride_uuid = ? ORDER BY step_index ASC"
       )
@@ -112,20 +129,23 @@ export function createRideRoutes(): Hono<HonoAppContext> {
       c.env.DB.prepare("SELECT * FROM ride_peaks WHERE ride_uuid = ? ORDER BY duration_s ASC")
         .bind(uuid)
         .all(),
+      c.env.DB.prepare(
+        "SELECT * FROM activity_laps WHERE ride_uuid = ? AND user_id = ? ORDER BY lap_index ASC"
+      )
+        .bind(uuid, userId)
+        .all(),
     ]);
-
-    if (!ride) {
-      return c.json({ error: "Ride not found" }, 404);
-    }
 
     return c.json({
       ride,
       intervals: intervalsRes.results,
       peaks: peaksRes.results,
+      laps: lapsRes.results,
     });
   });
 
   router.patch("/:ride_uuid", requireUiAuth, async (c) => {
+    const userId = c.get("userId");
     const uuid = c.req.param("ride_uuid");
     const body: unknown = await c.req.json().catch(() => null);
     const parsed = PatchRideSchema.safeParse(body);
@@ -133,8 +153,10 @@ export function createRideRoutes(): Hono<HonoAppContext> {
       return c.json({ error: "Invalid ride update", issues: parsed.error.issues }, 400);
     }
 
-    const current = await c.env.DB.prepare("SELECT * FROM rides WHERE ride_uuid = ?")
-      .bind(uuid)
+    const current = await c.env.DB.prepare(
+      "SELECT * FROM rides WHERE ride_uuid = ? AND user_id = ?"
+    )
+      .bind(uuid, userId)
       .first<RideRow>();
     if (!current) {
       return c.json({ error: "Ride not found" }, 404);
@@ -144,29 +166,33 @@ export function createRideRoutes(): Hono<HonoAppContext> {
       `UPDATE rides
        SET name = ?, rpe = ?, feel = ?, notes = ?,
            updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-       WHERE ride_uuid = ?`
+       WHERE ride_uuid = ? AND user_id = ?`
     )
       .bind(
         parsed.data.name ?? current.name,
         parsed.data.rpe !== undefined ? parsed.data.rpe : current.rpe,
         parsed.data.feel !== undefined ? parsed.data.feel : current.feel,
         parsed.data.notes !== undefined ? parsed.data.notes : current.notes,
-        uuid
+        uuid,
+        userId
       )
       .run();
 
-    const updated = await c.env.DB.prepare("SELECT * FROM rides WHERE ride_uuid = ?")
-      .bind(uuid)
+    const updated = await c.env.DB.prepare(
+      "SELECT * FROM rides WHERE ride_uuid = ? AND user_id = ?"
+    )
+      .bind(uuid, userId)
       .first<RideRow>();
     return c.json({ ride: updated });
   });
 
   router.delete("/:ride_uuid", requireUiAuth, async (c) => {
+    const userId = c.get("userId");
     const uuid = c.req.param("ride_uuid");
     const ride = await c.env.DB.prepare(
-      "SELECT ride_uuid, ride_day, r2_fit_key FROM rides WHERE ride_uuid = ?"
+      "SELECT ride_uuid, ride_day, r2_fit_key FROM rides WHERE ride_uuid = ? AND user_id = ?"
     )
-      .bind(uuid)
+      .bind(uuid, userId)
       .first<{ ride_uuid: string; ride_day: string; r2_fit_key: string }>();
     if (!ride) {
       return c.json({ error: "Ride not found" }, 404);
@@ -178,17 +204,18 @@ export function createRideRoutes(): Hono<HonoAppContext> {
          SET completed_ride_uuid = NULL,
              status = 'planned',
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-         WHERE completed_ride_uuid = ?`
-      ).bind(uuid),
-      c.env.DB.prepare("DELETE FROM rides WHERE ride_uuid = ?").bind(uuid),
+         WHERE completed_ride_uuid = ? AND user_id = ?`
+      ).bind(uuid, userId),
+      c.env.DB.prepare("DELETE FROM rides WHERE ride_uuid = ? AND user_id = ?").bind(uuid, userId),
     ]);
     await c.env.RIDES_BUCKET.delete(ride.r2_fit_key);
-    await recomputePmcFromDay(c.env.DB, ride.ride_day);
+    await recomputePmcFromDay(c.env.DB, ride.ride_day, userId);
 
     return c.json({ ok: true });
   });
 
   router.get("/:ride_uuid/timeseries", requireUiAuth, async (c) => {
+    const userId = c.get("userId");
     const uuid = c.req.param("ride_uuid");
     const rawBucket = Number(c.req.query("bucket_seconds") ?? 15);
     const bucketSeconds = Number.isFinite(rawBucket)
@@ -196,9 +223,9 @@ export function createRideRoutes(): Hono<HonoAppContext> {
       : 15;
 
     const ride = await c.env.DB.prepare(
-      "SELECT ride_uuid, name, r2_fit_key FROM rides WHERE ride_uuid = ?"
+      "SELECT ride_uuid, name, r2_fit_key FROM rides WHERE ride_uuid = ? AND user_id = ?"
     )
-      .bind(uuid)
+      .bind(uuid, userId)
       .first<{ ride_uuid: string; name: string; r2_fit_key: string }>();
 
     if (!ride) {
@@ -230,11 +257,12 @@ export function createRideRoutes(): Hono<HonoAppContext> {
   });
 
   router.get("/:ride_uuid/fit", requireUiAuth, async (c) => {
+    const userId = c.get("userId");
     const uuid = c.req.param("ride_uuid");
     const ride = await c.env.DB.prepare(
-      "SELECT r2_fit_key, name FROM rides WHERE ride_uuid = ?"
+      "SELECT r2_fit_key, name FROM rides WHERE ride_uuid = ? AND user_id = ?"
     )
-      .bind(uuid)
+      .bind(uuid, userId)
       .first<{ r2_fit_key: string; name: string }>();
 
     if (!ride) {

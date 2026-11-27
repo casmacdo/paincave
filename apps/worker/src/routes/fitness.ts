@@ -8,9 +8,10 @@ export function createFitnessRoutes(): Hono<HonoAppContext> {
   router.use("*", requireUiAuth);
 
   router.get("/overview", async (c) => {
+    const userId = c.get("userId");
     const daysParam = Number(c.req.query("days") ?? 42);
     const days = Number.isFinite(daysParam) ? daysParam : 42;
-    const overview = await getFitnessOverview(c.env.DB, days);
+    const overview = await getFitnessOverview(c.env.DB, days, userId);
     return c.json(overview);
   });
 

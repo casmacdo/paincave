@@ -18,11 +18,17 @@ export function createWorkoutRoutes(): Hono<HonoAppContext> {
   router.use("*", requireUiAuth);
 
   router.get("/", async (c) => {
+    const userId = c.get("userId");
     const category = c.req.query("category");
+    const sport = c.req.query("sport");
     const q = c.req.query("q");
 
-    const clauses = ["archived = 0"];
-    const binds: string[] = [];
+    const clauses = ["user_id = ?", "archived = 0"];
+    const binds: string[] = [userId];
+    if (sport && sport !== "all") {
+      clauses.push("sport = ?");
+      binds.push(sport);
+    }
     if (category) {
       clauses.push("category = ?");
       binds.push(category);
@@ -33,15 +39,17 @@ export function createWorkoutRoutes(): Hono<HonoAppContext> {
     }
 
     const sql = `SELECT * FROM workouts WHERE ${clauses.join(" AND ")} ORDER BY updated_at DESC`;
-    const stmt = binds.length > 0 ? c.env.DB.prepare(sql).bind(...binds) : c.env.DB.prepare(sql);
-    const { results } = await stmt.all<WorkoutRow>();
+    const { results } = await c.env.DB.prepare(sql).bind(...binds).all<WorkoutRow>();
     return c.json({ workouts: results });
   });
 
   router.get("/:id", async (c) => {
+    const userId = c.get("userId");
     const id = c.req.param("id");
-    const workout = await c.env.DB.prepare("SELECT * FROM workouts WHERE id = ? AND archived = 0")
-      .bind(id)
+    const workout = await c.env.DB.prepare(
+      "SELECT * FROM workouts WHERE id = ? AND user_id = ? AND archived = 0"
+    )
+      .bind(id, userId)
       .first<WorkoutRow>();
     if (!workout) {
       return c.json({ error: "Workout not found" }, 404);
@@ -50,9 +58,11 @@ export function createWorkoutRoutes(): Hono<HonoAppContext> {
   });
 
   router.post("/", async (c) => {
+    const userId = c.get("userId");
     const body: unknown = await c.req.json().catch(() => null);
     const createdBy = c.req.query("source") === "import" ? "import" : "user";
     const res = await saveValidatedWorkout(c.env.DB, {
+      userId,
       rawSpec: body,
       createdBy,
     });
@@ -66,9 +76,11 @@ export function createWorkoutRoutes(): Hono<HonoAppContext> {
   });
 
   router.put("/:id", async (c) => {
+    const userId = c.get("userId");
     const id = c.req.param("id");
     const body: unknown = await c.req.json().catch(() => null);
     const res = await saveValidatedWorkout(c.env.DB, {
+      userId,
       workoutId: id,
       rawSpec: body,
       createdBy: "user",
@@ -80,11 +92,12 @@ export function createWorkoutRoutes(): Hono<HonoAppContext> {
   });
 
   router.delete("/:id", async (c) => {
+    const userId = c.get("userId");
     const id = c.req.param("id");
     const res = await c.env.DB.prepare(
-      "UPDATE workouts SET archived = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
+      "UPDATE workouts SET archived = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND user_id = ?"
     )
-      .bind(id)
+      .bind(id, userId)
       .run();
     if ((res.meta.changes ?? 0) === 0) {
       return c.json({ error: "Workout not found" }, 404);
@@ -93,7 +106,8 @@ export function createWorkoutRoutes(): Hono<HonoAppContext> {
   });
 
   router.get("/:id/export.zwo", async (c) => {
-    const exported = await getWorkoutExport(c.env.DB, c.req.param("id"), "zwo");
+    const userId = c.get("userId");
+    const exported = await getWorkoutExport(c.env.DB, c.req.param("id"), "zwo", userId);
     if (!exported || typeof exported.content !== "string") {
       return c.json({ error: "Workout not found" }, 404);
     }
@@ -107,7 +121,8 @@ export function createWorkoutRoutes(): Hono<HonoAppContext> {
   });
 
   router.get("/:id/export.erg", async (c) => {
-    const exported = await getWorkoutExport(c.env.DB, c.req.param("id"), "erg");
+    const userId = c.get("userId");
+    const exported = await getWorkoutExport(c.env.DB, c.req.param("id"), "erg", userId);
     if (!exported || typeof exported.content !== "string") {
       return c.json({ error: "Workout not found" }, 404);
     }
@@ -121,11 +136,12 @@ export function createWorkoutRoutes(): Hono<HonoAppContext> {
   });
 
   router.get("/:id/flattened", async (c) => {
-    const exported = await getWorkoutExport(c.env.DB, c.req.param("id"), "flattened");
+    const userId = c.get("userId");
+    const exported = await getWorkoutExport(c.env.DB, c.req.param("id"), "flattened", userId);
     if (!exported || typeof exported.content === "string") {
       return c.json({ error: "Workout not found" }, 404);
     }
-    const thresholds = await getLatestThresholds(c.env.DB);
+    const thresholds = await getLatestThresholds(c.env.DB, userId);
     return c.json({
       workout_id: exported.workout.id,
       name: exported.workout.name,

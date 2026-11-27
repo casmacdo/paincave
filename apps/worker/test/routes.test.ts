@@ -163,8 +163,8 @@ describe("Routes API, FIT GPS Extraction, and Strava VirtualRide Tagging", () =>
     // Seed valid Strava OAuth token so uploadFitToStrava triggers
     const futureExp = Math.floor(Date.now() / 1000) + 7200;
     await env.DB.prepare(
-      `INSERT OR REPLACE INTO oauth_tokens (provider, access_token, refresh_token, expires_at, scope, athlete_external_id, updated_at)
-       VALUES ('strava', 'strava-virtual-token', 'ref-1', ?, 'activity:write,read', '12345', strftime('%Y-%m-%dT%H:%M:%SZ','now'))`
+      `INSERT OR REPLACE INTO provider_connections (user_id, provider, access_token, refresh_token, expires_at, scope, external_athlete_id, updated_at)
+       VALUES ('default_owner', 'strava', 'strava-virtual-token', 'ref-1', ?, 'activity:write,read', '12345', strftime('%Y-%m-%dT%H:%M:%SZ','now'))`
     )
       .bind(futureExp)
       .run();

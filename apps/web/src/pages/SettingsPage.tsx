@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, type AthleteThreshold, type AuthState } from "../lib/api.js";
+import { api, type AthleteProfile, type AthleteThreshold, type AuthState } from "../lib/api.js";
 import { authClient } from "../lib/auth-client.js";
 import type { BridgeClientSnapshot } from "../lib/bridge-client.js";
 
@@ -15,6 +15,7 @@ interface SettingsPageProps {
   bridgeUrl: string;
   onChangeBridgeUrl: (next: string) => void;
   bridgeSnapshot: BridgeClientSnapshot;
+  profile?: AthleteProfile | null;
   latestThresholds: AthleteThreshold | null;
   onThresholdsUpdated: () => Promise<void>;
   authState?: AuthState;
@@ -25,15 +26,20 @@ export function SettingsPage({
   bridgeUrl,
   onChangeBridgeUrl,
   bridgeSnapshot,
+  profile,
   latestThresholds,
   onThresholdsUpdated,
   authState,
   onSignOut,
 }: SettingsPageProps) {
-  const [ftp, setFtp] = useState(String(latestThresholds?.ftp_watts ?? 250));
+  const [ftp, setFtp] = useState(String(latestThresholds?.ftp_watts ?? ""));
+  const [thresholdPace, setThresholdPace] = useState(
+    latestThresholds?.threshold_pace_s_per_km ? String(latestThresholds.threshold_pace_s_per_km) : ""
+  );
   const [lthr, setLthr] = useState(String(latestThresholds?.lthr_bpm ?? 170));
   const [hrmax, setHrmax] = useState(String(latestThresholds?.hrmax_bpm ?? 190));
   const [weight, setWeight] = useState(String(latestThresholds?.weight_kg ?? 72));
+  const [indoorTrainer, setIndoorTrainer] = useState(profile?.features?.indoor_trainer ?? true);
   const [bridgeInput, setBridgeInput] = useState(bridgeUrl);
   const [strava, setStrava] = useState<{
     configured: boolean;
@@ -116,13 +122,21 @@ export function SettingsPage({
     e.preventDefault();
     await api.createThreshold({
       effective_from: new Date().toISOString().slice(0, 10),
-      ftp_watts: Number(ftp),
+      ftp_watts: Number(ftp) || null,
+      threshold_pace_s_per_km: Number(thresholdPace) || null,
       lthr_bpm: Number(lthr) || null,
       hrmax_bpm: Number(hrmax) || null,
       weight_kg: Number(weight) || null,
     });
     await onThresholdsUpdated();
     setSavedMsg("Saved new dated threshold snapshot.");
+  };
+
+  const handleToggleIndoorTrainer = async (enabled: boolean) => {
+    setIndoorTrainer(enabled);
+    await api.updateProfile({ features: { indoor_trainer: enabled } });
+    await onThresholdsUpdated();
+    setSavedMsg(enabled ? "Enabled indoor trainer & route tabs." : "Hid indoor trainer tabs.");
   };
 
   return (
@@ -143,11 +157,22 @@ export function SettingsPage({
           <h2 className="text-lg font-bold text-white">Athlete Thresholds (Dated Snapshot)</h2>
           <div className="grid grid-cols-2 gap-3">
             <label className="text-xs text-zinc-400">
-              FTP (Watts)
+              FTP (Watts, optional)
               <input
                 type="number"
                 value={ftp}
                 onChange={(e) => setFtp(e.target.value)}
+                placeholder="e.g. 250"
+                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-sm text-white"
+              />
+            </label>
+            <label className="text-xs text-zinc-400">
+              Run Threshold Pace (sec/km)
+              <input
+                type="number"
+                value={thresholdPace}
+                onChange={(e) => setThresholdPace(e.target.value)}
+                placeholder="e.g. 270 (4:30/km)"
                 className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-sm text-white"
               />
             </label>
@@ -189,7 +214,18 @@ export function SettingsPage({
         </form>
 
         <div className="space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-          <h2 className="text-lg font-bold text-white">Local Linux Trainer Bridge</h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-bold text-white">Local Linux Trainer Bridge</h2>
+            <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-zinc-300">
+              <input
+                type="checkbox"
+                checked={indoorTrainer}
+                onChange={(e) => void handleToggleIndoorTrainer(e.target.checked)}
+                className="h-4 w-4 accent-orange-500"
+              />
+              Show Ride &amp; Routes Tabs
+            </label>
+          </div>
           <p className="text-xs text-zinc-400">
             Status:{" "}
             <strong className={bridgeSnapshot.connected ? "text-emerald-400" : "text-amber-400"}>

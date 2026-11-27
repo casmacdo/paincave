@@ -8,7 +8,11 @@ import {
   timingSafeCompare,
   verifyPasswordPbkdf2,
 } from "../lib/auth.js";
-import { getBetterAuthSessionUser, resolveBetterAuthSecret } from "../lib/better-auth.js";
+import {
+  getBetterAuthSessionUser,
+  resolveBetterAuthSecret,
+  resolvePrimaryOwnerUserId,
+} from "../lib/better-auth.js";
 
 const AUTH_CODE_TTL_S = 300; // 5 minutes
 const ACCESS_TOKEN_TTL_S = 3600; // 1 hour
@@ -305,6 +309,9 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
       );
     }
 
+    const authorizedUserId = sessionUser
+      ? sessionUser.id
+      : await resolvePrimaryOwnerUserId(c.env.DB);
     const rawCode = generateSecureToken(32);
     const codeHash = await sha256Hex(rawCode);
     const nowSec = Math.floor(Date.now() / 1000);
@@ -313,9 +320,17 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
       c.env.DB.prepare("DELETE FROM mcp_oauth_codes WHERE expires_at <= ?").bind(nowSec),
       c.env.DB.prepare(
         `INSERT INTO mcp_oauth_codes
-          (code_hash, client_id, redirect_uri, code_challenge, code_challenge_method, scope, expires_at, used)
-         VALUES (?, ?, ?, ?, 'S256', ?, ?, 0)`
-      ).bind(codeHash, clientId, redirectUri, codeChallenge, scope, nowSec + AUTH_CODE_TTL_S),
+          (code_hash, user_id, client_id, redirect_uri, code_challenge, code_challenge_method, scope, expires_at, used)
+         VALUES (?, ?, ?, ?, ?, 'S256', ?, ?, 0)`
+      ).bind(
+        codeHash,
+        authorizedUserId,
+        clientId,
+        redirectUri,
+        codeChallenge,
+        scope,
+        nowSec + AUTH_CODE_TTL_S
+      ),
     ]);
 
     const redirect = new URL(redirectUri);
@@ -365,6 +380,7 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
         .bind(codeHash, nowSec)
         .first<{
           code_hash: string;
+          user_id: string;
           client_id: string;
           redirect_uri: string;
           code_challenge: string;
@@ -392,11 +408,12 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
         c.env.DB.prepare("UPDATE mcp_oauth_codes SET used = 1 WHERE code_hash = ?").bind(codeHash),
         c.env.DB.prepare(
           `INSERT INTO mcp_oauth_tokens
-            (token_hash, refresh_token_hash, client_id, scope, expires_at, refresh_expires_at, revoked)
-           VALUES (?, ?, ?, ?, ?, ?, 0)`
+            (token_hash, refresh_token_hash, user_id, client_id, scope, expires_at, refresh_expires_at, revoked)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0)`
         ).bind(
           accessHash,
           refreshHash,
+          row.user_id,
           clientId,
           row.scope,
           nowSec + ACCESS_TOKEN_TTL_S,
@@ -422,13 +439,14 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
 
       const oldRefreshHash = await sha256Hex(refreshToken);
       const row = await c.env.DB.prepare(
-        `SELECT token_hash, client_id, scope, refresh_expires_at
+        `SELECT token_hash, user_id, client_id, scope, refresh_expires_at
          FROM mcp_oauth_tokens
          WHERE refresh_token_hash = ? AND revoked = 0 AND refresh_expires_at > ?`
       )
         .bind(oldRefreshHash, nowSec)
         .first<{
           token_hash: string;
+          user_id: string;
           client_id: string;
           scope: string;
           refresh_expires_at: number;
@@ -451,11 +469,12 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
         ),
         c.env.DB.prepare(
           `INSERT INTO mcp_oauth_tokens
-            (token_hash, refresh_token_hash, client_id, scope, expires_at, refresh_expires_at, revoked)
-           VALUES (?, ?, ?, ?, ?, ?, 0)`
+            (token_hash, refresh_token_hash, user_id, client_id, scope, expires_at, refresh_expires_at, revoked)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0)`
         ).bind(
           newAccessHash,
           newRefreshHash,
+          row.user_id,
           row.client_id,
           row.scope,
           nowSec + ACCESS_TOKEN_TTL_S,

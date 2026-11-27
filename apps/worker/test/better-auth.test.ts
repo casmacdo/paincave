@@ -1,7 +1,10 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
 
-const testEnv = env as typeof env & { ALLOWED_OWNER_EMAIL?: string };
+const testEnv = env as typeof env & {
+  ALLOWED_OWNER_EMAIL?: string;
+  ALLOWED_USER_EMAILS?: string;
+};
 
 function extractSessionCookie(headers: Headers): string {
   const getSetCookie = (headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
@@ -15,12 +18,14 @@ function extractSessionCookie(headers: Headers): string {
 describe("Single-User Better Auth (Owner Lock, Sessions, & MCP OAuth)", () => {
   afterEach(async () => {
     testEnv.ALLOWED_OWNER_EMAIL = undefined;
+    testEnv.ALLOWED_USER_EMAILS = undefined;
     await env.DB.batch([
       env.DB.prepare("DELETE FROM passkey"),
       env.DB.prepare("DELETE FROM session"),
       env.DB.prepare("DELETE FROM account"),
       env.DB.prepare("DELETE FROM verification"),
       env.DB.prepare("DELETE FROM user"),
+      env.DB.prepare("DELETE FROM athlete_profile WHERE user_id != 'default_owner'"),
     ]);
   });
 
@@ -162,5 +167,42 @@ describe("Single-User Better Auth (Owner Lock, Sessions, & MCP OAuth)", () => {
       headers: { Cookie: baCookie },
     });
     expect(afterLogout.status).toBe(401);
+  });
+
+  it("allows multiple invited emails via ALLOWED_USER_EMAILS while blocking uninvited accounts", async () => {
+    testEnv.ALLOWED_USER_EMAILS = "cyclist@example.com, runner@example.com";
+
+    const u1 = await exports.default.fetch("https://paincave.test/api/auth/sign-up/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://paincave.test" },
+      body: JSON.stringify({
+        name: "Cyclist",
+        email: "cyclist@example.com",
+        password: "strong-password-123",
+      }),
+    });
+    expect(u1.status).toBe(200);
+
+    const u2 = await exports.default.fetch("https://paincave.test/api/auth/sign-up/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://paincave.test" },
+      body: JSON.stringify({
+        name: "Runner",
+        email: "runner@example.com",
+        password: "strong-password-456",
+      }),
+    });
+    expect(u2.status).toBe(200);
+
+    const u3 = await exports.default.fetch("https://paincave.test/api/auth/sign-up/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://paincave.test" },
+      body: JSON.stringify({
+        name: "Stranger",
+        email: "stranger@example.com",
+        password: "strong-password-789",
+      }),
+    });
+    expect(u3.status).toBe(403);
   });
 });

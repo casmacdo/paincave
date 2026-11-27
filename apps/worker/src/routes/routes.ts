@@ -63,9 +63,12 @@ export function createRouteRoutes(): Hono<HonoAppContext> {
   router.use("*", requireUiAuth);
 
   router.get("/", async (c) => {
+    const userId = c.get("userId");
     const { results } = await c.env.DB.prepare(
-      "SELECT * FROM routes ORDER BY created_at DESC"
-    ).all<RouteRow>();
+      "SELECT * FROM routes WHERE user_id = ? ORDER BY created_at DESC"
+    )
+      .bind(userId)
+      .all<RouteRow>();
 
     const userRoutes: RouteListItem[] = results.map(rowToItem);
     const presetRoutes: RouteListItem[] = BUILT_IN_ROUTE_PRESETS.map((p) => ({
@@ -107,8 +110,9 @@ export function createRouteRoutes(): Hono<HonoAppContext> {
       });
     }
 
-    const row = await c.env.DB.prepare("SELECT * FROM routes WHERE id = ?")
-      .bind(id)
+    const userId = c.get("userId");
+    const row = await c.env.DB.prepare("SELECT * FROM routes WHERE id = ? AND user_id = ?")
+      .bind(id, userId)
       .first<RouteRow>();
     if (!row) {
       return c.json({ error: "Route not found" }, 404);
@@ -165,8 +169,9 @@ export function createRouteRoutes(): Hono<HonoAppContext> {
       );
     }
 
+    const userId = c.get("userId");
     const id = crypto.randomUUID();
-    const r2Key = `routes/${id}.json`;
+    const r2Key = `users/${userId}/routes/${id}.json`;
     const createdAt = new Date().toISOString();
 
     await c.env.RIDES_BUCKET.put(r2Key, JSON.stringify({ points: analyzed.points }), {
@@ -174,11 +179,12 @@ export function createRouteRoutes(): Hono<HonoAppContext> {
     });
 
     await c.env.DB.prepare(
-      `INSERT INTO routes (id, name, source, distance_m, total_ascent_m, max_grade_pct, point_count, r2_route_key, created_at)
-       VALUES (?, ?, 'gpx', ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO routes (id, user_id, name, source, distance_m, total_ascent_m, max_grade_pct, point_count, r2_route_key, created_at)
+       VALUES (?, ?, ?, 'gpx', ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id,
+        userId,
         analyzed.name,
         analyzed.distance_m,
         analyzed.total_ascent_m,
@@ -205,11 +211,12 @@ export function createRouteRoutes(): Hono<HonoAppContext> {
   });
 
   router.post("/from-ride/:ride_uuid", async (c) => {
+    const userId = c.get("userId");
     const rideUuid = c.req.param("ride_uuid");
     const ride = await c.env.DB.prepare(
-      "SELECT ride_uuid, name, r2_fit_key FROM rides WHERE ride_uuid = ?"
+      "SELECT ride_uuid, name, r2_fit_key FROM rides WHERE ride_uuid = ? AND user_id = ?"
     )
-      .bind(rideUuid)
+      .bind(rideUuid, userId)
       .first<{ ride_uuid: string; name: string; r2_fit_key: string }>();
     if (!ride) {
       return c.json({ error: "Ride not found" }, 404);
@@ -233,7 +240,7 @@ export function createRouteRoutes(): Hono<HonoAppContext> {
     }
 
     const id = crypto.randomUUID();
-    const r2Key = `routes/${id}.json`;
+    const r2Key = `users/${userId}/routes/${id}.json`;
     const createdAt = new Date().toISOString();
 
     await c.env.RIDES_BUCKET.put(r2Key, JSON.stringify({ points: analyzed.points }), {
@@ -241,11 +248,12 @@ export function createRouteRoutes(): Hono<HonoAppContext> {
     });
 
     await c.env.DB.prepare(
-      `INSERT INTO routes (id, name, source, distance_m, total_ascent_m, max_grade_pct, point_count, r2_route_key, created_at)
-       VALUES (?, ?, 'fit_extract', ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO routes (id, user_id, name, source, distance_m, total_ascent_m, max_grade_pct, point_count, r2_route_key, created_at)
+       VALUES (?, ?, ?, 'fit_extract', ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id,
+        userId,
         analyzed.name,
         analyzed.distance_m,
         analyzed.total_ascent_m,
@@ -272,19 +280,24 @@ export function createRouteRoutes(): Hono<HonoAppContext> {
   });
 
   router.delete("/:id", async (c) => {
+    const userId = c.get("userId");
     const id = c.req.param("id");
     if (getBuiltInRoutePreset(id)) {
       return c.json({ error: "Built-in route presets cannot be deleted" }, 400);
     }
 
-    const row = await c.env.DB.prepare("SELECT id, r2_route_key FROM routes WHERE id = ?")
-      .bind(id)
+    const row = await c.env.DB.prepare(
+      "SELECT id, r2_route_key FROM routes WHERE id = ? AND user_id = ?"
+    )
+      .bind(id, userId)
       .first<{ id: string; r2_route_key: string }>();
     if (!row) {
       return c.json({ error: "Route not found" }, 404);
     }
 
-    await c.env.DB.prepare("DELETE FROM routes WHERE id = ?").bind(id).run();
+    await c.env.DB.prepare("DELETE FROM routes WHERE id = ? AND user_id = ?")
+      .bind(id, userId)
+      .run();
     await c.env.RIDES_BUCKET.delete(row.r2_route_key).catch(() => {});
     return c.json({ ok: true });
   });

@@ -3,6 +3,7 @@ export interface WorkerSecrets {
   SESSION_SIGNING_SECRET?: string;
   BETTER_AUTH_SECRET?: string;
   ALLOWED_OWNER_EMAIL?: string;
+  ALLOWED_USER_EMAILS?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   BRIDGE_DEVICE_TOKEN?: string;
@@ -22,6 +23,7 @@ export interface HonoAppContext {
   Bindings: AppEnv;
   Variables: {
     authMethod: "session" | "bridge" | "bearer" | "oauth" | "none";
+    userId: string;
     requestId: string;
   };
 }

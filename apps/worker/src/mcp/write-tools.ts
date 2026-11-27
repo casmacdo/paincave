@@ -30,8 +30,9 @@ export function registerWriteTools(registry: McpToolRegistry): void {
         dry_run: optionalCoercedBoolean(),
       }),
     },
-    async ({ spec, dry_run }, env) => {
+    async ({ spec, dry_run }, env, userId) => {
       const res = await saveValidatedWorkout(env.DB, {
+        userId,
         rawSpec: spec,
         createdBy: "llm",
         dryRun: dry_run ?? false,
@@ -60,8 +61,9 @@ export function registerWriteTools(registry: McpToolRegistry): void {
         dry_run: optionalCoercedBoolean(),
       }),
     },
-    async ({ workout_id, spec, dry_run }, env) => {
+    async ({ workout_id, spec, dry_run }, env, userId) => {
       const res = await saveValidatedWorkout(env.DB, {
+        userId,
         workoutId: workout_id,
         rawSpec: spec,
         createdBy: "llm",
@@ -92,8 +94,9 @@ export function registerWriteTools(registry: McpToolRegistry): void {
         replace_existing: optionalCoercedBoolean(),
       }),
     },
-    async ({ scheduled_date, workout_id, coach_rationale, replace_existing }, env) => {
+    async ({ scheduled_date, workout_id, coach_rationale, replace_existing }, env, userId) => {
       const res = await scheduleWorkoutSession(env.DB, {
+        userId,
         scheduledDate: scheduled_date,
         workoutId: workout_id,
         coachRationale: coach_rationale,
@@ -103,20 +106,24 @@ export function registerWriteTools(registry: McpToolRegistry): void {
         throw new Error(res.error);
       }
 
-      // Compute deterministic projected PMC through scheduled_date
+      // Compute deterministic projected PMC through scheduled_date for this user
       const [baselineRes, plannedRes] = await Promise.all([
-        env.DB.prepare("SELECT day, ctl, atl FROM daily_pmc ORDER BY day DESC LIMIT 8").all<{
-          day: string;
-          ctl: number;
-          atl: number;
-        }>(),
+        env.DB.prepare(
+          "SELECT day, ctl, atl FROM daily_pmc WHERE user_id = ? ORDER BY day DESC LIMIT 8"
+        )
+          .bind(userId)
+          .all<{
+            day: string;
+            ctl: number;
+            atl: number;
+          }>(),
         env.DB.prepare(
           `SELECT ps.scheduled_date AS day, w.predicted_tss AS tss
            FROM planned_sessions ps
-           JOIN workouts w ON w.id = ps.workout_id
-           WHERE ps.status = 'planned' AND ps.scheduled_date <= ?`
+           JOIN workouts w ON w.id = ps.workout_id AND w.user_id = ps.user_id
+           WHERE ps.user_id = ? AND ps.status = 'planned' AND ps.scheduled_date <= ?`
         )
-          .bind(scheduled_date)
+          .bind(userId, scheduled_date)
           .all<{ day: string; tss: number | null }>(),
       ]);
 
@@ -160,10 +167,12 @@ export function registerWriteTools(registry: McpToolRegistry): void {
         reason: z.string().max(500).optional(),
       }),
     },
-    async ({ session_id, action, new_date, reason }, env) => {
+    async ({ session_id, action, new_date, reason }, env, userId) => {
       if (action === "delete") {
-        const res = await env.DB.prepare("DELETE FROM planned_sessions WHERE id = ?")
-          .bind(session_id)
+        const res = await env.DB.prepare(
+          "DELETE FROM planned_sessions WHERE id = ? AND user_id = ?"
+        )
+          .bind(session_id, userId)
           .run();
         if ((res.meta.changes ?? 0) === 0) throw new Error(`Session not found: ${session_id}`);
         return { ok: true, action, session_id };
@@ -175,9 +184,9 @@ export function registerWriteTools(registry: McpToolRegistry): void {
            SET status = 'skipped',
                coach_rationale = CASE WHEN ? != '' THEN ? ELSE coach_rationale END,
                updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-           WHERE id = ?`
+           WHERE id = ? AND user_id = ?`
         )
-          .bind(reason ?? "", reason ?? "", session_id)
+          .bind(reason ?? "", reason ?? "", session_id, userId)
           .run();
         if ((res.meta.changes ?? 0) === 0) throw new Error(`Session not found: ${session_id}`);
         return { ok: true, action, session_id };
@@ -189,13 +198,15 @@ export function registerWriteTools(registry: McpToolRegistry): void {
       const res = await env.DB.prepare(
         `UPDATE planned_sessions
          SET scheduled_date = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-         WHERE id = ?`
+         WHERE id = ? AND user_id = ?`
       )
-        .bind(new_date, session_id)
+        .bind(new_date, session_id, userId)
         .run();
       if ((res.meta.changes ?? 0) === 0) throw new Error(`Session not found: ${session_id}`);
-      const updated = await env.DB.prepare("SELECT * FROM planned_sessions WHERE id = ?")
-        .bind(session_id)
+      const updated = await env.DB.prepare(
+        "SELECT * FROM planned_sessions WHERE id = ? AND user_id = ?"
+      )
+        .bind(session_id, userId)
         .first();
       return { ok: true, action, session: updated };
     }
@@ -210,18 +221,19 @@ export function registerWriteTools(registry: McpToolRegistry): void {
         id: z.string().min(1).optional(),
       }),
     },
-    async (args, env) => {
+    async (args, env, userId) => {
       const id = args.id ?? crypto.randomUUID();
       if (args.id) {
         const res = await env.DB.prepare(
           `UPDATE training_blocks
-           SET name = ?, goal_event = ?, target_date = ?, phase = ?, start_date = ?, end_date = ?,
+           SET name = ?, sport = ?, goal_event = ?, target_date = ?, phase = ?, start_date = ?, end_date = ?,
                weekly_hours_target = ?, constraints_json = ?, active = ?,
                updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-           WHERE id = ?`
+           WHERE id = ? AND user_id = ?`
         )
           .bind(
             args.name,
+            args.sport ?? null,
             args.goal_event ?? null,
             args.target_date ?? null,
             args.phase,
@@ -230,19 +242,22 @@ export function registerWriteTools(registry: McpToolRegistry): void {
             args.weekly_hours_target,
             JSON.stringify(args.constraints),
             args.active ? 1 : 0,
-            id
+            id,
+            userId
           )
           .run();
         if ((res.meta.changes ?? 0) === 0) throw new Error(`Training block not found: ${id}`);
       } else {
         await env.DB.prepare(
           `INSERT INTO training_blocks
-            (id, name, goal_event, target_date, phase, start_date, end_date, weekly_hours_target, constraints_json, active)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            (id, user_id, name, sport, goal_event, target_date, phase, start_date, end_date, weekly_hours_target, constraints_json, active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
           .bind(
             id,
+            userId,
             args.name,
+            args.sport ?? null,
             args.goal_event ?? null,
             args.target_date ?? null,
             args.phase,
@@ -254,8 +269,10 @@ export function registerWriteTools(registry: McpToolRegistry): void {
           )
           .run();
       }
-      const block = await env.DB.prepare("SELECT * FROM training_blocks WHERE id = ?")
-        .bind(id)
+      const block = await env.DB.prepare(
+        "SELECT * FROM training_blocks WHERE id = ? AND user_id = ?"
+      )
+        .bind(id, userId)
         .first();
       return { block };
     }
@@ -265,18 +282,20 @@ export function registerWriteTools(registry: McpToolRegistry): void {
     "save_coaching_note",
     {
       description:
-        "Stores a durable training note (injury, preference, training response, equipment, schedule) for future planning and analysis.",
+        "Stores a durable training/health memory note (injury, preference, training response, equipment, schedule, health) for future planning and analysis.",
       inputSchema: CoachingNoteInputSchema,
     },
-    async ({ category, content }, env) => {
+    async ({ category, sport, content }, env, userId) => {
       const id = crypto.randomUUID();
       await env.DB.prepare(
-        "INSERT INTO coaching_notes (id, category, content, active) VALUES (?, ?, ?, 1)"
+        "INSERT INTO coaching_notes (id, user_id, category, sport, content, active) VALUES (?, ?, ?, ?, ?, 1)"
       )
-        .bind(id, category, content)
+        .bind(id, userId, category, sport ?? null, content)
         .run();
-      const note = await env.DB.prepare("SELECT * FROM coaching_notes WHERE id = ?")
-        .bind(id)
+      const note = await env.DB.prepare(
+        "SELECT * FROM coaching_notes WHERE id = ? AND user_id = ?"
+      )
+        .bind(id, userId)
         .first();
       return { note };
     }
@@ -285,16 +304,16 @@ export function registerWriteTools(registry: McpToolRegistry): void {
   registry.register(
     "archive_coaching_note",
     {
-      description: "Archives an outdated training note so it no longer appears in active context.",
+      description: "Archives an outdated training/health memory note so it no longer appears in active context.",
       inputSchema: z.object({
         note_id: z.string().min(1),
       }),
     },
-    async ({ note_id }, env) => {
+    async ({ note_id }, env, userId) => {
       const res = await env.DB.prepare(
-        "UPDATE coaching_notes SET active = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
+        "UPDATE coaching_notes SET active = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND user_id = ?"
       )
-        .bind(note_id)
+        .bind(note_id, userId)
         .run();
       if ((res.meta.changes ?? 0) === 0) throw new Error(`Training note not found: ${note_id}`);
       return { ok: true, note_id };
@@ -305,20 +324,22 @@ export function registerWriteTools(registry: McpToolRegistry): void {
     "log_threshold_update",
     {
       description:
-        "Appends a new dated athlete threshold snapshot (FTP, LTHR, HRmax, CP, W', weight) without altering historical ride snapshots.",
+        "Appends a new dated athlete threshold snapshot (FTP, running threshold pace, LTHR, HRmax, CP, W', weight) without altering historical activity snapshots.",
       inputSchema: ThresholdCreateSchema,
     },
-    async (args, env) => {
+    async (args, env, userId) => {
       const id = crypto.randomUUID();
       await env.DB.prepare(
         `INSERT INTO athlete_thresholds
-          (id, effective_from, ftp_watts, lthr_bpm, hrmax_bpm, hrrest_bpm, cp_watts, w_prime_j, weight_kg, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, user_id, effective_from, ftp_watts, threshold_pace_s_per_km, lthr_bpm, hrmax_bpm, hrrest_bpm, cp_watts, w_prime_j, weight_kg, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
         .bind(
           id,
+          userId,
           args.effective_from,
-          args.ftp_watts,
+          args.ftp_watts ?? null,
+          args.threshold_pace_s_per_km ?? null,
           args.lthr_bpm ?? null,
           args.hrmax_bpm ?? null,
           args.hrrest_bpm ?? null,
@@ -328,8 +349,10 @@ export function registerWriteTools(registry: McpToolRegistry): void {
           args.notes ?? null
         )
         .run();
-      const threshold = await env.DB.prepare("SELECT * FROM athlete_thresholds WHERE id = ?")
-        .bind(id)
+      const threshold = await env.DB.prepare(
+        "SELECT * FROM athlete_thresholds WHERE id = ? AND user_id = ?"
+      )
+        .bind(id, userId)
         .first();
       return { threshold };
     }

@@ -21,26 +21,41 @@ export interface AuthState {
   user?: AuthUserSummary | null;
   has_owner?: boolean;
   owner_email_restricted?: boolean;
+  allow_registration?: boolean;
   providers?: AuthProvidersInfo;
 }
 
 export interface AthleteProfile {
-  id: number;
+  user_id?: string;
+  id?: number;
   display_name: string;
   timezone: string;
   units: "metric" | "imperial";
+  primary_sports?: string[];
+  features?: {
+    indoor_trainer: boolean;
+  };
 }
 
 export interface AthleteThreshold {
   id: string;
   effective_from: string;
-  ftp_watts: number;
+  ftp_watts: number | null;
+  threshold_pace_s_per_km?: number | null;
   lthr_bpm: number | null;
   hrmax_bpm: number | null;
   weight_kg: number | null;
   cp_watts: number | null;
   w_prime_j: number | null;
   notes: string | null;
+}
+
+export interface DeviceTokenRecord {
+  token_hash: string;
+  label: string;
+  scope: "bridge" | "importer" | "mcp";
+  last_used_at: string | null;
+  created_at: string;
 }
 
 export interface WorkoutRecord {
@@ -183,7 +198,8 @@ export const api = {
     requestJson<{ thresholds: AthleteThreshold[] }>("/api/athlete/thresholds"),
   createThreshold: (payload: {
     effective_from: string;
-    ftp_watts: number;
+    ftp_watts?: number | null;
+    threshold_pace_s_per_km?: number | null;
     lthr_bpm?: number | null;
     hrmax_bpm?: number | null;
     weight_kg?: number | null;
@@ -193,6 +209,20 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+    }),
+  listDeviceTokens: () => requestJson<{ tokens: DeviceTokenRecord[] }>("/api/auth/tokens"),
+  createDeviceToken: (label: string, scope: "bridge" | "importer" | "mcp") =>
+    requestJson<{ token: string; token_hash: string; label: string; scope: string }>(
+      "/api/auth/tokens",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label, scope }),
+      }
+    ),
+  deleteDeviceToken: (tokenHash: string) =>
+    requestJson<{ ok: boolean }>(`/api/auth/tokens/${encodeURIComponent(tokenHash)}`, {
+      method: "DELETE",
     }),
   getBlocks: () => requestJson<{ blocks: Record<string, unknown>[] }>("/api/athlete/blocks"),
   getNotes: () => requestJson<{ notes: { id: string; category: string; content: string }[] }>("/api/athlete/notes"),

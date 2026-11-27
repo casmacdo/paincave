@@ -3,6 +3,7 @@ import type { AppEnv, HonoAppContext } from "../types.js";
 import {
   getBetterAuthSessionUser,
   resolveBetterAuthSecret,
+  resolvePrimaryOwnerUserId,
   type BetterAuthUserSummary,
 } from "./better-auth.js";
 
@@ -199,7 +200,12 @@ export function clearUiSessionCookie(requestUrl: string): string {
 export async function verifyUiSessionRequest(
   c: Context<HonoAppContext>
 ): Promise<
-  | { ok: true; authMode: "better_auth" | "legacy_password"; user: BetterAuthUserSummary | null }
+  | {
+      ok: true;
+      authMode: "better_auth" | "legacy_password";
+      userId: string;
+      user: BetterAuthUserSummary | null;
+    }
   | { ok: false; status: 401 | 503; error: string }
 > {
   const hasBetterAuth = resolveBetterAuthSecret(c.env) !== null;
@@ -216,7 +222,7 @@ export async function verifyUiSessionRequest(
   if (hasBetterAuth) {
     const baUser = await getBetterAuthSessionUser(c.env, c.req.raw);
     if (baUser) {
-      return { ok: true, authMode: "better_auth", user: baUser };
+      return { ok: true, authMode: "better_auth", userId: baUser.id, user: baUser };
     }
   }
 
@@ -238,13 +244,35 @@ export async function verifyUiSessionRequest(
         .first<{ token_hash: string }>();
 
       if (row) {
-        return { ok: true, authMode: "legacy_password", user: null };
+        const ownerId = await resolvePrimaryOwnerUserId(c.env.DB);
+        return { ok: true, authMode: "legacy_password", userId: ownerId, user: null };
       }
       return { ok: false, status: 401, error: "Session expired or revoked" };
     }
   }
 
   return { ok: false, status: 401, error: "Authentication required" };
+}
+
+export async function lookupDeviceTokenUser(
+  db: D1Database,
+  rawToken: string,
+  allowedScopes: readonly ("bridge" | "importer" | "mcp")[]
+): Promise<string | null> {
+  if (!rawToken || rawToken.length < 16) return null;
+  const tokenHash = await sha256Hex(rawToken);
+  const row = await db
+    .prepare("SELECT user_id, scope FROM user_device_tokens WHERE token_hash = ?")
+    .bind(tokenHash)
+    .first<{ user_id: string; scope: "bridge" | "importer" | "mcp" }>();
+  if (!row || !allowedScopes.includes(row.scope)) return null;
+  await db
+    .prepare(
+      "UPDATE user_device_tokens SET last_used_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE token_hash = ?"
+    )
+    .bind(tokenHash)
+    .run();
+  return row.user_id;
 }
 
 export async function requireUiAuth(
@@ -256,6 +284,7 @@ export async function requireUiAuth(
     return c.json({ error: check.error }, check.status);
   }
   c.set("authMethod", "session");
+  c.set("userId", check.userId);
   await next();
 }
 
@@ -265,6 +294,14 @@ export async function requireBridgeOrUiAuth(
 ): Promise<Response | void> {
   const bridgeToken = c.req.header("X-Bridge-Token");
   if (bridgeToken !== undefined) {
+    const dbUserId = await lookupDeviceTokenUser(c.env.DB, bridgeToken, ["bridge"]);
+    if (dbUserId) {
+      c.set("authMethod", "bridge");
+      c.set("userId", dbUserId);
+      await next();
+      return;
+    }
+
     const expected = c.env.BRIDGE_DEVICE_TOKEN;
     if (!expected || expected.length < 16) {
       return c.json({ error: "BRIDGE_DEVICE_TOKEN is not configured" }, 503);
@@ -273,7 +310,9 @@ export async function requireBridgeOrUiAuth(
     if (!valid) {
       return c.json({ error: "Invalid bridge device token" }, 401);
     }
+    const ownerId = await resolvePrimaryOwnerUserId(c.env.DB);
     c.set("authMethod", "bridge");
+    c.set("userId", ownerId);
     await next();
     return;
   }
@@ -283,13 +322,17 @@ export async function requireBridgeOrUiAuth(
     return c.json({ error: check.error }, check.status);
   }
   c.set("authMethod", "session");
+  c.set("userId", check.userId);
   await next();
 }
 
 export async function verifyMcpAuth(
   request: Request,
   env: AppEnv
-): Promise<{ ok: true; method: "bearer" | "oauth" } | { ok: false; status: 401 | 503; error: string }> {
+): Promise<
+  | { ok: true; method: "bearer" | "oauth"; userId: string }
+  | { ok: false; status: 401 | 503; error: string }
+> {
   const hasBearer = Boolean(env.MCP_BEARER_TOKEN && env.MCP_BEARER_TOKEN.length >= 16);
   const hasOAuth = Boolean(env.UI_ADMIN_PASSWORD_HASH || resolveBetterAuthSecret(env));
   if (!hasBearer && !hasOAuth) {
@@ -309,20 +352,26 @@ export async function verifyMcpAuth(
   if (hasBearer && env.MCP_BEARER_TOKEN) {
     const matchesStatic = await timingSafeCompare(token, env.MCP_BEARER_TOKEN);
     if (matchesStatic) {
-      return { ok: true, method: "bearer" };
+      const ownerId = await resolvePrimaryOwnerUserId(env.DB);
+      return { ok: true, method: "bearer", userId: ownerId };
     }
+  }
+
+  const personalMcpUser = await lookupDeviceTokenUser(env.DB, token, ["mcp"]);
+  if (personalMcpUser) {
+    return { ok: true, method: "bearer", userId: personalMcpUser };
   }
 
   const tokenHash = await sha256Hex(token);
   const nowSec = Math.floor(Date.now() / 1000);
   const row = await env.DB.prepare(
-    "SELECT token_hash FROM mcp_oauth_tokens WHERE token_hash = ? AND revoked = 0 AND expires_at > ?"
+    "SELECT token_hash, user_id FROM mcp_oauth_tokens WHERE token_hash = ? AND revoked = 0 AND expires_at > ?"
   )
     .bind(tokenHash, nowSec)
-    .first<{ token_hash: string }>();
+    .first<{ token_hash: string; user_id: string }>();
 
   if (row) {
-    return { ok: true, method: "oauth" };
+    return { ok: true, method: "oauth", userId: row.user_id };
   }
 
   return { ok: false, status: 401, error: "Invalid or expired MCP token" };

@@ -5,7 +5,9 @@ import {
   SESSION_COOKIE_NAME,
   clearUiSessionCookie,
   createUiSessionCookie,
+  generateSecureToken,
   parseCookie,
+  requireUiAuth,
   sha256Hex,
   verifyPasswordPbkdf2,
   verifyUiSessionRequest,
@@ -15,12 +17,17 @@ import {
   getConfiguredProviders,
   hasBetterAuthSessionCookie,
   hasRegisteredOwner,
-  parseAllowedOwnerEmails,
+  parseAllowedUserEmails,
   resolveBetterAuthSecret,
 } from "../lib/better-auth.js";
 
 const LoginBodySchema = z.object({
   password: z.string().min(1).max(256),
+});
+
+const CreateTokenSchema = z.object({
+  label: z.string().trim().min(1).max(80),
+  scope: z.enum(["bridge", "importer", "mcp"]),
 });
 
 export function createAuthRoutes(): Hono<HonoAppContext> {
@@ -98,7 +105,9 @@ export function createAuthRoutes(): Hono<HonoAppContext> {
       hasRegisteredOwner(c.env.DB),
     ]);
     const providers = getConfiguredProviders(c.env);
-    const ownerEmailRestricted = parseAllowedOwnerEmails(c.env.ALLOWED_OWNER_EMAIL).length > 0;
+    const allowedEmails = parseAllowedUserEmails(c.env);
+    const ownerEmailRestricted = allowedEmails.length > 0;
+    const allowRegistration = !hasOwner || allowedEmails.length > 1;
 
     if (!check.ok) {
       return c.json(
@@ -109,6 +118,7 @@ export function createAuthRoutes(): Hono<HonoAppContext> {
           user: null,
           has_owner: hasOwner,
           owner_email_restricted: ownerEmailRestricted,
+          allow_registration: allowRegistration,
           providers,
         },
         200
@@ -122,8 +132,59 @@ export function createAuthRoutes(): Hono<HonoAppContext> {
       user: check.user,
       has_owner: hasOwner,
       owner_email_restricted: ownerEmailRestricted,
+      allow_registration: allowRegistration,
       providers,
     });
+  });
+
+  // Per-user device / importer / personal MCP token management
+  router.get("/tokens", requireUiAuth, async (c) => {
+    const userId = c.get("userId");
+    const { results } = await c.env.DB.prepare(
+      "SELECT token_hash, label, scope, last_used_at, created_at FROM user_device_tokens WHERE user_id = ? ORDER BY created_at DESC"
+    )
+      .bind(userId)
+      .all();
+    return c.json({ tokens: results });
+  });
+
+  router.post("/tokens", requireUiAuth, async (c) => {
+    const userId = c.get("userId");
+    const body: unknown = await c.req.json().catch(() => null);
+    const parsed = CreateTokenSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid token request", issues: parsed.error.issues }, 400);
+    }
+    const rawToken = `pc_${parsed.data.scope}_${generateSecureToken(24)}`;
+    const tokenHash = await sha256Hex(rawToken);
+    await c.env.DB.prepare(
+      "INSERT INTO user_device_tokens (token_hash, user_id, label, scope) VALUES (?, ?, ?, ?)"
+    )
+      .bind(tokenHash, userId, parsed.data.label, parsed.data.scope)
+      .run();
+    return c.json(
+      {
+        token: rawToken,
+        token_hash: tokenHash,
+        label: parsed.data.label,
+        scope: parsed.data.scope,
+      },
+      201
+    );
+  });
+
+  router.delete("/tokens/:token_hash", requireUiAuth, async (c) => {
+    const userId = c.get("userId");
+    const tokenHash = c.req.param("token_hash");
+    const res = await c.env.DB.prepare(
+      "DELETE FROM user_device_tokens WHERE token_hash = ? AND user_id = ?"
+    )
+      .bind(tokenHash, userId)
+      .run();
+    if ((res.meta.changes ?? 0) === 0) {
+      return c.json({ error: "Token not found" }, 404);
+    }
+    return c.json({ ok: true });
   });
 
   // Mount Better Auth endpoints: /api/auth/sign-up/*, /api/auth/sign-in/*, /api/auth/callback/*, /api/auth/passkey/*, etc.

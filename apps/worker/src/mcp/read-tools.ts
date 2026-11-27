@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { computeDailyPmc, downsampleRecords, parseFitRecords } from "@paincave/shared";
 import { optionalCoercedInt, optionalEnum, type McpToolRegistry } from "./protocol.js";
+import { ensureAthleteProfile } from "../lib/better-auth.js";
 import { getFitnessOverview } from "../lib/fitness-service.js";
 import { todayUtcDay } from "../lib/pmc-store.js";
 import type { RideRow } from "../lib/rides-service.js";
@@ -35,23 +36,30 @@ export function registerReadTools(registry: McpToolRegistry): void {
     "get_athlete_context",
     {
       description:
-        "Returns athlete profile, current and historical thresholds (FTP, LTHR, HRmax, CP, W', weight), active training blocks with schedule constraints, and active training notes.",
+        "Returns athlete profile, current and historical thresholds (FTP, threshold pace, LTHR, HRmax, CP, W', weight), active training blocks with schedule constraints, and active training notes.",
       inputSchema: z.object({}),
     },
-    async (_args, env) => {
+    async (_args, env, userId) => {
+      await ensureAthleteProfile(env.DB, userId);
       const [profile, latestThresholds, thresholdsHistory, blocksRes, notesRes] =
         await Promise.all([
-          env.DB.prepare("SELECT * FROM athlete_profile WHERE id = 1").first(),
-          getLatestThresholds(env.DB),
+          env.DB.prepare("SELECT * FROM athlete_profile WHERE user_id = ?").bind(userId).first(),
+          getLatestThresholds(env.DB, userId),
           env.DB.prepare(
-            "SELECT * FROM athlete_thresholds ORDER BY effective_from DESC, created_at DESC LIMIT 10"
-          ).all<AthleteThresholdRow>(),
+            "SELECT * FROM athlete_thresholds WHERE user_id = ? ORDER BY effective_from DESC, created_at DESC LIMIT 10"
+          )
+            .bind(userId)
+            .all<AthleteThresholdRow>(),
           env.DB.prepare(
-            "SELECT * FROM training_blocks WHERE active = 1 ORDER BY start_date DESC"
-          ).all<TrainingBlockRow>(),
+            "SELECT * FROM training_blocks WHERE user_id = ? AND active = 1 ORDER BY start_date DESC"
+          )
+            .bind(userId)
+            .all<TrainingBlockRow>(),
           env.DB.prepare(
-            "SELECT * FROM coaching_notes WHERE active = 1 ORDER BY created_at DESC"
-          ).all<CoachingNoteRow>(),
+            "SELECT * FROM coaching_notes WHERE user_id = ? AND active = 1 ORDER BY created_at DESC"
+          )
+            .bind(userId)
+            .all<CoachingNoteRow>(),
         ]);
 
       return {
@@ -71,13 +79,13 @@ export function registerReadTools(registry: McpToolRegistry): void {
     "get_fitness_overview",
     {
       description:
-        "Returns current CTL/ATL/TSB/7d ramp rate, daily PMC series, weekly hours/TSS/zone rollups, and rolling 42d/90d MMP peak power curves + CP/W' estimate.",
+        "Returns current CTL/ATL/TSB/7d ramp rate, daily PMC series, weekly hours/TSS/distance/zone rollups, and rolling 42d/90d MMP peak power curves + CP/W' estimate.",
       inputSchema: z.object({
         days: optionalCoercedInt(7, 365),
       }),
     },
-    async ({ days }, env) => {
-      return getFitnessOverview(env.DB, days ?? 42);
+    async ({ days }, env, userId) => {
+      return getFitnessOverview(env.DB, days ?? 42, userId);
     }
   );
 
@@ -85,38 +93,50 @@ export function registerReadTools(registry: McpToolRegistry): void {
     "list_recent_rides",
     {
       description:
-        "Lists recent completed rides with compact physiological summaries (NP, IF, TSS, avg/max HR, EF, Pw:HR decoupling, time >90% HRmax, compliance %, RPE/feel/notes, quality flags).",
+        "Lists recent completed activities/rides with compact physiological summaries (sport, distance, pace/GAP, NP, IF, TSS, avg/max HR, EF, decoupling, compliance %, notes, quality flags).",
       inputSchema: z.object({
         days: optionalCoercedInt(1, 365),
         limit: optionalCoercedInt(1, 100),
         source: optionalEnum(["all", "indoor_bridge", "manual_fit", "external_sync"]),
+        sport: optionalEnum(["all", "cycling", "running", "strength", "mobility", "other"]),
       }),
     },
-    async ({ days, limit, source }, env) => {
+    async ({ days, limit, source, sport }, env, userId) => {
       const effectiveDays = days ?? 28;
       const effectiveLimit = limit ?? 20;
-      const effectiveSource = source ?? "all";
       const sinceDay = shiftDay(todayUtcDay(), -(effectiveDays - 1));
-      const sql =
-        effectiveSource === "all"
-          ? "SELECT * FROM rides WHERE ride_day >= ? ORDER BY started_at DESC LIMIT ?"
-          : "SELECT * FROM rides WHERE ride_day >= ? AND source = ? ORDER BY started_at DESC LIMIT ?";
-      const stmt =
-        effectiveSource === "all"
-          ? env.DB.prepare(sql).bind(sinceDay, effectiveLimit)
-          : env.DB.prepare(sql).bind(sinceDay, effectiveSource, effectiveLimit);
 
-      const { results } = await stmt.all<RideRow>();
+      const clauses = ["user_id = ?", "ride_day >= ?"];
+      const binds: (string | number)[] = [userId, sinceDay];
+      if (source && source !== "all") {
+        clauses.push("source = ?");
+        binds.push(source);
+      }
+      if (sport && sport !== "all") {
+        clauses.push("sport = ?");
+        binds.push(sport);
+      }
+      binds.push(effectiveLimit);
+
+      const sql = `SELECT * FROM rides WHERE ${clauses.join(" AND ")} ORDER BY started_at DESC LIMIT ?`;
+      const { results } = await env.DB.prepare(sql).bind(...binds).all<RideRow>();
       return {
         since_day: sinceDay,
         rides: results.map((r) => ({
           ride_uuid: r.ride_uuid,
+          sport: r.sport,
+          sub_sport: r.sub_sport,
           name: r.name,
           source: r.source,
           workout_id: r.workout_id,
           started_at: r.started_at,
           ride_day: r.ride_day,
           duration_s: r.duration_s,
+          distance_m: r.distance_m,
+          elevation_gain_m: r.elevation_gain_m,
+          avg_pace_s_per_km: r.avg_pace_s_per_km,
+          gap_s_per_km: r.gap_s_per_km,
+          pa_hr_decoupling: r.pa_hr_decoupling,
           work_kj: r.work_kj,
           avg_power: r.avg_power,
           np_watts: r.np_watts,
@@ -144,16 +164,23 @@ export function registerReadTools(registry: McpToolRegistry): void {
     "get_ride_detail",
     {
       description:
-        "Returns full metrics, power & HR zones, quality flags, MMP peaks, per-interval compliance breakdown, and linked workout spec for a ride.",
+        "Returns full metrics, power & HR zones, quality flags, MMP peaks, lap/km splits, per-interval compliance breakdown, and linked workout spec for an activity/ride.",
       inputSchema: z.object({
         ride_uuid: z.string().uuid(),
       }),
     },
-    async ({ ride_uuid }, env) => {
-      const [ride, intervalsRes, peaksRes] = await Promise.all([
-        env.DB.prepare("SELECT * FROM rides WHERE ride_uuid = ?")
-          .bind(ride_uuid)
-          .first<RideRow>(),
+    async ({ ride_uuid }, env, userId) => {
+      const ride = await env.DB.prepare(
+        "SELECT * FROM rides WHERE ride_uuid = ? AND user_id = ?"
+      )
+        .bind(ride_uuid, userId)
+        .first<RideRow>();
+
+      if (!ride) {
+        throw new Error(`Ride not found: ${ride_uuid}`);
+      }
+
+      const [intervalsRes, peaksRes, lapsRes] = await Promise.all([
         env.DB.prepare(
           "SELECT * FROM ride_intervals WHERE ride_uuid = ? ORDER BY step_index ASC"
         )
@@ -162,16 +189,19 @@ export function registerReadTools(registry: McpToolRegistry): void {
         env.DB.prepare("SELECT * FROM ride_peaks WHERE ride_uuid = ? ORDER BY duration_s ASC")
           .bind(ride_uuid)
           .all(),
+        env.DB.prepare(
+          "SELECT * FROM activity_laps WHERE ride_uuid = ? AND user_id = ? ORDER BY lap_index ASC"
+        )
+          .bind(ride_uuid, userId)
+          .all(),
       ]);
 
-      if (!ride) {
-        throw new Error(`Ride not found: ${ride_uuid}`);
-      }
-
       const linkedWorkout = ride.workout_id
-        ? await env.DB.prepare("SELECT id, name, category, spec_json FROM workouts WHERE id = ?")
-            .bind(ride.workout_id)
-            .first<{ id: string; name: string; category: string; spec_json: string }>()
+        ? await env.DB.prepare(
+            "SELECT id, name, sport, category, spec_json FROM workouts WHERE id = ? AND user_id = ?"
+          )
+            .bind(ride.workout_id, userId)
+            .first<{ id: string; name: string; sport: string; category: string; spec_json: string }>()
         : null;
 
       return {
@@ -180,13 +210,16 @@ export function registerReadTools(registry: McpToolRegistry): void {
           power_zones: safeJsonParse(ride.power_zones_json, {}),
           hr_zones: safeJsonParse(ride.hr_zones_json, {}),
           quality_flags: safeJsonParse(ride.quality_flags_json, {}),
+          running_dynamics: safeJsonParse(ride.running_dynamics_json, {}),
         },
         intervals: intervalsRes.results,
         peaks: peaksRes.results,
+        laps: lapsRes.results,
         workout: linkedWorkout
           ? {
               id: linkedWorkout.id,
               name: linkedWorkout.name,
+              sport: linkedWorkout.sport,
               category: linkedWorkout.category,
               spec: safeJsonParse(linkedWorkout.spec_json, null),
             }
@@ -205,12 +238,12 @@ export function registerReadTools(registry: McpToolRegistry): void {
         bucket_seconds: optionalCoercedInt(5, 300),
       }),
     },
-    async ({ ride_uuid, bucket_seconds }, env) => {
+    async ({ ride_uuid, bucket_seconds }, env, userId) => {
       const effectiveBucketSeconds = bucket_seconds ?? 30;
       const ride = await env.DB.prepare(
-        "SELECT ride_uuid, name, r2_fit_key FROM rides WHERE ride_uuid = ?"
+        "SELECT ride_uuid, name, r2_fit_key FROM rides WHERE ride_uuid = ? AND user_id = ?"
       )
-        .bind(ride_uuid)
+        .bind(ride_uuid, userId)
         .first<{ ride_uuid: string; name: string; r2_fit_key: string }>();
 
       if (!ride) {
@@ -240,23 +273,23 @@ export function registerReadTools(registry: McpToolRegistry): void {
     "get_calendar",
     {
       description:
-        "Returns planned sessions and completed rides within [start_date, end_date], plus projected CTL/ATL/TSB if upcoming planned sessions are completed.",
+        "Returns planned sessions and completed activities within [start_date, end_date], plus projected CTL/ATL/TSB if upcoming planned sessions are completed.",
       inputSchema: z.object({
         start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       }),
     },
-    async ({ start_date, end_date }, env) => {
+    async ({ start_date, end_date }, env, userId) => {
       const [sessionsRes, ridesRes, baselinePmc] = await Promise.all([
         env.DB.prepare(
-          `SELECT ps.*, w.name AS workout_name, w.category AS workout_category,
+          `SELECT ps.*, w.name AS workout_name, w.sport AS workout_sport, w.category AS workout_category,
                   w.duration_s AS planned_duration_s, w.predicted_if, w.predicted_tss
            FROM planned_sessions ps
-           JOIN workouts w ON w.id = ps.workout_id
-           WHERE ps.scheduled_date >= ? AND ps.scheduled_date <= ?
+           JOIN workouts w ON w.id = ps.workout_id AND w.user_id = ps.user_id
+           WHERE ps.user_id = ? AND ps.scheduled_date >= ? AND ps.scheduled_date <= ?
            ORDER BY ps.scheduled_date ASC`
         )
-          .bind(start_date, end_date)
+          .bind(userId, start_date, end_date)
           .all<{
             id: string;
             scheduled_date: string;
@@ -265,22 +298,26 @@ export function registerReadTools(registry: McpToolRegistry): void {
             coach_rationale: string;
             completed_ride_uuid: string | null;
             workout_name: string;
+            workout_sport: string;
             workout_category: string;
             planned_duration_s: number;
             predicted_if: number | null;
             predicted_tss: number | null;
           }>(),
         env.DB.prepare(
-          `SELECT ride_uuid, name, source, ride_day, duration_s, np_watts, intensity_factor, tss, compliance_pct, rpe, feel
+          `SELECT ride_uuid, sport, name, source, ride_day, duration_s, distance_m, avg_pace_s_per_km,
+                  np_watts, intensity_factor, tss, compliance_pct, rpe, feel
            FROM rides
-           WHERE ride_day >= ? AND ride_day <= ?
+           WHERE user_id = ? AND ride_day >= ? AND ride_day <= ?
            ORDER BY started_at ASC`
         )
-          .bind(start_date, end_date)
+          .bind(userId, start_date, end_date)
           .all(),
         env.DB.prepare(
-          "SELECT day, ctl, atl FROM daily_pmc ORDER BY day DESC LIMIT 8"
-        ).all<{ day: string; ctl: number; atl: number }>(),
+          "SELECT day, ctl, atl FROM daily_pmc WHERE user_id = ? ORDER BY day DESC LIMIT 8"
+        )
+          .bind(userId)
+          .all<{ day: string; ctl: number; atl: number }>(),
       ]);
 
       const today = todayUtcDay();
@@ -321,17 +358,22 @@ export function registerReadTools(registry: McpToolRegistry): void {
   registry.register(
     "list_workouts",
     {
-      description: "Lists workouts in the saved library filtered by category or search query.",
+      description: "Lists workouts in the saved library filtered by sport, category, or search query.",
       inputSchema: z.object({
+        sport: optionalEnum(["all", "cycling", "running", "strength", "mobility"]),
         category: z.string().optional(),
         query: z.string().optional(),
         limit: optionalCoercedInt(1, 100),
       }),
     },
-    async ({ category, query, limit }, env) => {
+    async ({ sport, category, query, limit }, env, userId) => {
       const effectiveLimit = limit ?? 25;
-      const clauses = ["archived = 0"];
-      const binds: (string | number)[] = [];
+      const clauses = ["user_id = ?", "archived = 0"];
+      const binds: (string | number)[] = [userId];
+      if (sport && sport !== "all") {
+        clauses.push("sport = ?");
+        binds.push(sport);
+      }
       if (category) {
         clauses.push("category = ?");
         binds.push(category);
@@ -342,7 +384,7 @@ export function registerReadTools(registry: McpToolRegistry): void {
       }
       binds.push(effectiveLimit);
 
-      const sql = `SELECT id, name, description, category, duration_s, predicted_np, predicted_if, predicted_tss, version, created_by, updated_at
+      const sql = `SELECT id, sport, name, description, category, duration_s, predicted_np, predicted_if, predicted_tss, version, created_by, updated_at
                    FROM workouts WHERE ${clauses.join(" AND ")} ORDER BY updated_at DESC LIMIT ?`;
       const { results } = await env.DB.prepare(sql).bind(...binds).all();
       return { workouts: results };
@@ -357,15 +399,18 @@ export function registerReadTools(registry: McpToolRegistry): void {
         workout_id: z.string().min(1),
       }),
     },
-    async ({ workout_id }, env) => {
-      const row = await env.DB.prepare("SELECT * FROM workouts WHERE id = ? AND archived = 0")
-        .bind(workout_id)
+    async ({ workout_id }, env, userId) => {
+      const row = await env.DB.prepare(
+        "SELECT * FROM workouts WHERE id = ? AND user_id = ? AND archived = 0"
+      )
+        .bind(workout_id, userId)
         .first<WorkoutRow>();
       if (!row) {
         throw new Error(`Workout not found: ${workout_id}`);
       }
       return {
         id: row.id,
+        sport: row.sport,
         name: row.name,
         description: row.description,
         category: row.category,

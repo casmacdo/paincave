@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { HonoAppContext } from "./types.js";
+import { DEFAULT_OWNER_USER_ID } from "./lib/better-auth.js";
 import { logJson } from "./lib/logger.js";
 import { createAuthRoutes } from "./routes/auth.js";
 import { createAthleteRoutes } from "./routes/athlete.js";
@@ -20,6 +21,7 @@ export function createApp(): Hono<HonoAppContext> {
     const requestId = crypto.randomUUID();
     c.set("requestId", requestId);
     c.set("authMethod", "none");
+    c.set("userId", DEFAULT_OWNER_USER_ID);
 
     await next();
 

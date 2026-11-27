@@ -5,6 +5,7 @@ import {
   type MmpPoint,
   type PowerZoneSeconds,
 } from "@paincave/shared";
+import { DEFAULT_OWNER_USER_ID } from "./better-auth.js";
 import { todayUtcDay } from "./pmc-store.js";
 import { getLatestThresholds } from "../routes/athlete.js";
 
@@ -14,6 +15,8 @@ export interface WeeklyRollup {
   hours: number;
   tss: number;
   work_kj: number;
+  distance_km: number;
+  running_km: number;
   zone_distribution_pct: PowerZoneSeconds;
 }
 
@@ -64,6 +67,7 @@ function mondayOfWeek(day: string): string {
 
 async function queryRollingMmp(
   db: D1Database,
+  userId: string,
   sinceDay: string,
   weightKg: number | null
 ): Promise<MmpPoint[]> {
@@ -72,11 +76,11 @@ async function queryRollingMmp(
       `SELECT rp.duration_s, MAX(rp.watts) AS watts
        FROM ride_peaks rp
        JOIN rides r ON r.ride_uuid = rp.ride_uuid
-       WHERE r.ride_day >= ?
+       WHERE r.user_id = ? AND r.ride_day >= ?
        GROUP BY rp.duration_s
        ORDER BY rp.duration_s ASC`
     )
-    .bind(sinceDay)
+    .bind(userId, sinceDay)
     .all<{ duration_s: MmpDuration; watts: number }>();
 
   return results.map((r) => ({
@@ -86,7 +90,11 @@ async function queryRollingMmp(
   }));
 }
 
-export async function getFitnessOverview(db: D1Database, days = 42): Promise<FitnessOverview> {
+export async function getFitnessOverview(
+  db: D1Database,
+  days = 42,
+  userId = DEFAULT_OWNER_USER_ID
+): Promise<FitnessOverview> {
   const clampedDays = Math.min(365, Math.max(7, days));
   const today = todayUtcDay();
   const startDay = shiftDay(today, -(clampedDays - 1));
@@ -96,9 +104,9 @@ export async function getFitnessOverview(db: D1Database, days = 42): Promise<Fit
   const [pmcRes, latestPmc, ridesRes, latestThresholds] = await Promise.all([
     db
       .prepare(
-        "SELECT day, total_tss, ctl, atl, tsb, ramp_rate_7d FROM daily_pmc WHERE day >= ? ORDER BY day ASC"
+        "SELECT day, total_tss, ctl, atl, tsb, ramp_rate_7d FROM daily_pmc WHERE user_id = ? AND day >= ? ORDER BY day ASC"
       )
-      .bind(startDay)
+      .bind(userId, startDay)
       .all<{
         day: string;
         total_tss: number;
@@ -109,8 +117,9 @@ export async function getFitnessOverview(db: D1Database, days = 42): Promise<Fit
       }>(),
     db
       .prepare(
-        "SELECT day, ctl, atl, tsb, ramp_rate_7d FROM daily_pmc ORDER BY day DESC LIMIT 1"
+        "SELECT day, ctl, atl, tsb, ramp_rate_7d FROM daily_pmc WHERE user_id = ? ORDER BY day DESC LIMIT 1"
       )
+      .bind(userId)
       .first<{
         day: string;
         ctl: number;
@@ -120,28 +129,38 @@ export async function getFitnessOverview(db: D1Database, days = 42): Promise<Fit
       }>(),
     db
       .prepare(
-        "SELECT ride_day, duration_s, tss, work_kj, power_zones_json FROM rides WHERE ride_day >= ? ORDER BY ride_day ASC"
+        "SELECT ride_day, sport, duration_s, distance_m, tss, work_kj, power_zones_json FROM rides WHERE user_id = ? AND ride_day >= ? ORDER BY ride_day ASC"
       )
-      .bind(startDay)
+      .bind(userId, startDay)
       .all<{
         ride_day: string;
+        sport: string;
         duration_s: number;
+        distance_m: number | null;
         tss: number;
         work_kj: number;
         power_zones_json: string;
       }>(),
-    getLatestThresholds(db),
+    getLatestThresholds(db, userId),
   ]);
 
   const weightKg = latestThresholds?.weight_kg ?? null;
   const [mmp42, mmp90] = await Promise.all([
-    queryRollingMmp(db, day42, weightKg),
-    queryRollingMmp(db, day90, weightKg),
+    queryRollingMmp(db, userId, day42, weightKg),
+    queryRollingMmp(db, userId, day90, weightKg),
   ]);
 
   const weeklyMap = new Map<
     string,
-    { rides: number; duration_s: number; tss: number; work_kj: number; zones: PowerZoneSeconds }
+    {
+      rides: number;
+      duration_s: number;
+      tss: number;
+      work_kj: number;
+      distance_m: number;
+      running_m: number;
+      zones: PowerZoneSeconds;
+    }
   >();
 
   for (const ride of ridesRes.results) {
@@ -151,12 +170,18 @@ export async function getFitnessOverview(db: D1Database, days = 42): Promise<Fit
       duration_s: 0,
       tss: 0,
       work_kj: 0,
+      distance_m: 0,
+      running_m: 0,
       zones: { z1: 0, z2: 0, z3: 0, z4: 0, z5: 0, z6: 0, z7: 0 },
     };
     entry.rides++;
     entry.duration_s += ride.duration_s;
     entry.tss += ride.tss;
     entry.work_kj += ride.work_kj;
+    entry.distance_m += ride.distance_m ?? 0;
+    if (ride.sport === "running") {
+      entry.running_m += ride.distance_m ?? 0;
+    }
 
     try {
       const z = JSON.parse(ride.power_zones_json) as Partial<PowerZoneSeconds>;
@@ -186,6 +211,8 @@ export async function getFitnessOverview(db: D1Database, days = 42): Promise<Fit
         hours: Number((w.duration_s / 3600).toFixed(2)),
         tss: Number(w.tss.toFixed(1)),
         work_kj: Number(w.work_kj.toFixed(1)),
+        distance_km: Number((w.distance_m / 1000).toFixed(2)),
+        running_km: Number((w.running_m / 1000).toFixed(2)),
         zone_distribution_pct: {
           z1: pct(w.zones.z1),
           z2: pct(w.zones.z2),

@@ -67,3 +67,12 @@ This file is an append-only handoff log maintained by `scripts/update-task.mjs` 
 
 ## 2026-11-26 20:11 UTC — M7-02 (`pending` -> `done`)
 - Deployment runbook written; release Rust build, web build, wrangler deploy --dry-run, and strict hygiene/verify passed
+
+## 2026-11-27 17:34 UTC — M8-01 (`pending` -> `done`)
+- Added migration 0005_multi_user_health.sql and multi-user schema migration tests
+
+## 2026-11-27 17:35 UTC — M8-02 (`pending` -> `done`)
+- Implemented ALLOWED_USER_EMAILS allowlist, per-user userId resolution, and per-user MCP OAuth & device tokens
+
+## 2026-11-27 17:36 UTC — M8-03 (`pending` -> `done`)
+- Scoped all Worker APIs, R2 prefixes, and MCP tools by userId with cross-user isolation tests and sport-aware PWA nav

@@ -1,11 +1,12 @@
 import { z } from "zod";
 import type { AppEnv } from "../types.js";
+import { DEFAULT_OWNER_USER_ID } from "../lib/better-auth.js";
 
 export interface McpToolDefinition<TInput extends z.ZodType = z.ZodType> {
   name: string;
   description: string;
   inputSchema: TInput;
-  handler: (args: z.infer<TInput>, env: AppEnv) => Promise<unknown>;
+  handler: (args: z.infer<TInput>, env: AppEnv, userId: string) => Promise<unknown>;
 }
 
 interface JsonRpcRequest {
@@ -70,13 +71,13 @@ export class McpToolRegistry {
       description: string;
       inputSchema: TInput;
     },
-    handler: (args: z.infer<TInput>, env: AppEnv) => Promise<unknown>
+    handler: (args: z.infer<TInput>, env: AppEnv, userId: string) => Promise<unknown>
   ): void {
     this.tools.set(name, {
       name,
       description: config.description,
       inputSchema: config.inputSchema,
-      handler: handler as (args: unknown, env: AppEnv) => Promise<unknown>,
+      handler: handler as (args: unknown, env: AppEnv, userId: string) => Promise<unknown>,
     });
   }
 
@@ -106,7 +107,8 @@ export class McpToolRegistry {
   async callTool(
     name: string,
     rawArgs: unknown,
-    env: AppEnv
+    env: AppEnv,
+    userId = DEFAULT_OWNER_USER_ID
   ): Promise<{
     isError: boolean;
     content: { type: "text"; text: string }[];
@@ -137,7 +139,7 @@ export class McpToolRegistry {
     }
 
     try {
-      const result = await tool.handler(parsed.data, env);
+      const result = await tool.handler(parsed.data, env, userId);
       return {
         isError: false,
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -168,7 +170,8 @@ function jsonRpcError(
 async function dispatchSingleRpc(
   req: JsonRpcRequest,
   registry: McpToolRegistry,
-  env: AppEnv
+  env: AppEnv,
+  userId: string
 ): Promise<Record<string, unknown> | null> {
   if (req.jsonrpc !== "2.0" || typeof req.method !== "string") {
     return jsonRpcError(req.id, -32600, "Invalid Request");
@@ -223,7 +226,7 @@ async function dispatchSingleRpc(
     if (typeof params.name !== "string") {
       return jsonRpcError(req.id, -32602, "tools/call requires string 'name'");
     }
-    const callResult = await registry.callTool(params.name, params.arguments, env);
+    const callResult = await registry.callTool(params.name, params.arguments, env, userId);
     return jsonRpcOk(req.id, callResult);
   }
 
@@ -237,7 +240,8 @@ async function dispatchSingleRpc(
 export async function handleStatelessMcpPost(
   request: Request,
   registry: McpToolRegistry,
-  env: AppEnv
+  env: AppEnv,
+  userId = DEFAULT_OWNER_USER_ID
 ): Promise<Response> {
   let payload: unknown;
   try {
@@ -255,7 +259,8 @@ export async function handleStatelessMcpPost(
       const res = await dispatchSingleRpc(
         item && typeof item === "object" ? (item as JsonRpcRequest) : {},
         registry,
-        env
+        env,
+        userId
       );
       if (res !== null) responses.push(res);
     }
@@ -269,7 +274,7 @@ export async function handleStatelessMcpPost(
     return Response.json(jsonRpcError(null, -32600, "Invalid Request"), { status: 400 });
   }
 
-  const res = await dispatchSingleRpc(payload, registry, env);
+  const res = await dispatchSingleRpc(payload, registry, env, userId);
   if (res === null) {
     return new Response(null, { status: 202 });
   }

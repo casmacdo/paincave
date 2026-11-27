@@ -490,7 +490,7 @@
       "id": "M8-01",
       "milestone": "M8",
       "title": "Add D1 migration 0005_multi_user_health.sql (user_id isolation, multi-sport rides/workouts, activity_laps, daily_biometrics, provider_connections, user_device_tokens)",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M7-02"
       ],
@@ -504,13 +504,15 @@
         "Creates activity_laps, daily_biometrics, and user_device_tokens tables with composite indexes",
         "Migration test verifies clean application over 0001-0004 with pre-populated single-user data intact"
       ],
-      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test && ./scripts/verify.sh --strict"
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test && ./scripts/verify.sh --strict",
+      "notes": "Added migration 0005_multi_user_health.sql and multi-user schema migration tests",
+      "updated_at": "2026-11-27T17:34:06.588Z"
     },
     {
       "id": "M8-02",
       "milestone": "M8",
       "title": "Implement ALLOWED_USER_EMAILS allowlist auth, request-scoped userId resolution, and per-user MCP OAuth & device tokens",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M8-01"
       ],
@@ -528,13 +530,15 @@
         "MCP OAuth /oauth/authorize binds issued codes and tokens to the approving userId",
         "Auth tests verify allowlist acceptance, non-allowlisted 403 rejection, and per-user MCP token binding"
       ],
-      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run lint && npm --workspace @paincave/worker run test"
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm run lint && npm --workspace @paincave/worker run test",
+      "notes": "Implemented ALLOWED_USER_EMAILS allowlist, per-user userId resolution, and per-user MCP OAuth & device tokens",
+      "updated_at": "2026-11-27T17:35:20.640Z"
     },
     {
       "id": "M8-03",
       "milestone": "M8",
       "title": "Scope all Worker APIs, R2 object keys, and MCP tools by userId with cross-user isolation tests and sport-aware PWA navigation",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M8-02"
       ],
@@ -558,7 +562,9 @@
         "Cross-user isolation Vitest suite proves User B cannot read, list, update, delete, or MCP-query User A rides, workouts, thresholds, notes, or calendar",
         "PWA reads athlete_profile.features_json.indoor_trainer to hide KICKR Ride/Routes tabs for non-trainer users with toggle in Settings"
       ],
-      "verify_cmd": "./scripts/verify.sh --strict"
+      "verify_cmd": "./scripts/verify.sh --strict",
+      "notes": "Scoped all Worker APIs, R2 prefixes, and MCP tools by userId with cross-user isolation tests and sport-aware PWA nav",
+      "updated_at": "2026-11-27T17:36:01.328Z"
     },
     {
       "id": "M9-01",

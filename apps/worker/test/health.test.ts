@@ -22,9 +22,14 @@ describe("Worker Health, Migrations & Bindings", () => {
   });
 
   it("applies D1 migrations and accesses R2 bucket binding", async () => {
-    const profile = await env.DB.prepare("SELECT id, display_name, timezone FROM athlete_profile WHERE id = 1")
-      .first<{ id: number; display_name: string; timezone: string }>();
-    expect(profile).toEqual({ id: 1, display_name: "Athlete", timezone: "UTC" });
+    const profile = await env.DB.prepare(
+      "SELECT user_id, display_name, timezone FROM athlete_profile WHERE user_id = 'default_owner'"
+    ).first<{ user_id: string; display_name: string; timezone: string }>();
+    expect(profile).toEqual({
+      user_id: "default_owner",
+      display_name: "Athlete",
+      timezone: "UTC",
+    });
 
     const { results: tables } = await env.DB.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"

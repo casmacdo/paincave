@@ -4,6 +4,8 @@ import { passkey } from "@better-auth/passkey";
 import type { AppEnv } from "../types.js";
 import { hashPasswordPbkdf2, verifyPasswordPbkdf2 } from "./auth.js";
 
+export const DEFAULT_OWNER_USER_ID = "default_owner";
+
 export interface AuthProvidersInfo {
   email_password: boolean;
   passkey: boolean;
@@ -31,6 +33,14 @@ export function parseAllowedOwnerEmails(raw: string | undefined): string[] {
     .filter((entry) => entry.length > 0 && entry.includes("@"));
 }
 
+export function parseAllowedUserEmails(env: AppEnv): string[] {
+  const merged = [
+    ...parseAllowedOwnerEmails(env.ALLOWED_USER_EMAILS),
+    ...parseAllowedOwnerEmails(env.ALLOWED_OWNER_EMAIL),
+  ];
+  return Array.from(new Set(merged));
+}
+
 export function resolveAuthBaseUrl(env: AppEnv, requestUrl: string): string {
   const configured = env.PUBLIC_APP_URL?.trim();
   if (configured) {
@@ -49,7 +59,11 @@ export function getConfiguredProviders(env: AppEnv): AuthProvidersInfo {
     email_password: hasSecret,
     passkey: hasSecret,
     google: Boolean(hasSecret && env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
-    legacy_password: Boolean(env.UI_ADMIN_PASSWORD_HASH && env.SESSION_SIGNING_SECRET && env.SESSION_SIGNING_SECRET.length >= 16),
+    legacy_password: Boolean(
+      env.UI_ADMIN_PASSWORD_HASH &&
+        env.SESSION_SIGNING_SECRET &&
+        env.SESSION_SIGNING_SECRET.length >= 16
+    ),
   };
 }
 
@@ -62,6 +76,83 @@ export async function hasRegisteredOwner(db: D1Database): Promise<boolean> {
   }
 }
 
+export async function resolvePrimaryOwnerUserId(db: D1Database): Promise<string> {
+  try {
+    const row = await db
+      .prepare("SELECT id FROM user ORDER BY createdAt ASC LIMIT 1")
+      .first<{ id: string }>();
+    return row?.id ?? DEFAULT_OWNER_USER_ID;
+  } catch {
+    return DEFAULT_OWNER_USER_ID;
+  }
+}
+
+export async function ensureAthleteProfile(
+  db: D1Database,
+  userId: string,
+  displayName?: string,
+  indoorTrainerDefault = true
+): Promise<void> {
+  const sportsJson = indoorTrainerDefault ? '["cycling","strength"]' : '["running","strength"]';
+  const featuresJson = JSON.stringify({ indoor_trainer: indoorTrainerDefault });
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO athlete_profile
+         (user_id, display_name, timezone, units, primary_sports_json, features_json)
+       VALUES (?, ?, 'UTC', 'metric', ?, ?)`
+    )
+    .bind(userId, displayName?.trim() || "Athlete", sportsJson, featuresJson)
+    .run();
+}
+
+async function adoptDefaultOwnerRows(db: D1Database, newOwnerId: string): Promise<void> {
+  const singleTables = [
+    "athlete_thresholds",
+    "training_blocks",
+    "coaching_notes",
+    "workouts",
+    "rides",
+    "planned_sessions",
+    "routes",
+    "activity_laps",
+    "mcp_oauth_codes",
+    "mcp_oauth_tokens",
+    "oauth_states",
+    "user_device_tokens",
+  ];
+  const stmts: D1PreparedStatement[] = singleTables.map((table) =>
+    db
+      .prepare(`UPDATE ${table} SET user_id = ? WHERE user_id = ?`)
+      .bind(newOwnerId, DEFAULT_OWNER_USER_ID)
+  );
+
+  // Composite/PK tables: avoid PK conflict if newOwnerId already has a row
+  stmts.push(
+    db
+      .prepare(
+        `UPDATE OR IGNORE athlete_profile SET user_id = ? WHERE user_id = ?`
+      )
+      .bind(newOwnerId, DEFAULT_OWNER_USER_ID),
+    db
+      .prepare("DELETE FROM athlete_profile WHERE user_id = ?")
+      .bind(DEFAULT_OWNER_USER_ID),
+    db
+      .prepare(`UPDATE OR IGNORE daily_pmc SET user_id = ? WHERE user_id = ?`)
+      .bind(newOwnerId, DEFAULT_OWNER_USER_ID),
+    db.prepare("DELETE FROM daily_pmc WHERE user_id = ?").bind(DEFAULT_OWNER_USER_ID),
+    db
+      .prepare(`UPDATE OR IGNORE daily_biometrics SET user_id = ? WHERE user_id = ?`)
+      .bind(newOwnerId, DEFAULT_OWNER_USER_ID),
+    db.prepare("DELETE FROM daily_biometrics WHERE user_id = ?").bind(DEFAULT_OWNER_USER_ID),
+    db
+      .prepare(`UPDATE OR IGNORE provider_connections SET user_id = ? WHERE user_id = ?`)
+      .bind(newOwnerId, DEFAULT_OWNER_USER_ID),
+    db.prepare("DELETE FROM provider_connections WHERE user_id = ?").bind(DEFAULT_OWNER_USER_ID)
+  );
+
+  await db.batch(stmts);
+}
+
 export function hasBetterAuthSessionCookie(cookieHeader: string | undefined): boolean {
   if (!cookieHeader) return false;
   return (
@@ -72,7 +163,8 @@ export function hasBetterAuthSessionCookie(cookieHeader: string | undefined): bo
 
 /**
  * Creates a request-scoped Better Auth instance bound directly to Cloudflare D1.
- * Enforces strict single-user instance ownership via `databaseHooks.user.create.before`.
+ * Enforces invite-only allowlist (`ALLOWED_USER_EMAILS` / `ALLOWED_OWNER_EMAIL`) or
+ * fail-closed single-owner lock when no allowlist is set.
  */
 export function createBetterAuth(env: AppEnv, requestUrl: string) {
   const secret = resolveBetterAuthSecret(env);
@@ -83,7 +175,7 @@ export function createBetterAuth(env: AppEnv, requestUrl: string) {
   const baseURL = resolveAuthBaseUrl(env, requestUrl);
   const requestOrigin = new URL(requestUrl).origin;
   const trustedOrigins = Array.from(new Set([baseURL, requestOrigin]));
-  const allowedEmails = parseAllowedOwnerEmails(env.ALLOWED_OWNER_EMAIL);
+  const allowedEmails = parseAllowedUserEmails(env);
 
   const socialProviders: Record<string, { clientId: string; clientSecret: string }> = {};
   if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
@@ -132,19 +224,21 @@ export function createBetterAuth(env: AppEnv, requestUrl: string) {
         create: {
           before: async (user) => {
             const normalized = user.email.trim().toLowerCase();
-            if (allowedEmails.length > 0 && !allowedEmails.includes(normalized)) {
-              throw new APIError("FORBIDDEN", {
-                message: "Signups are restricted to the configured instance owner.",
-              });
-            }
-
-            const countRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM user").first<{
-              cnt: number;
-            }>();
-            if ((countRow?.cnt ?? 0) >= 1) {
-              throw new APIError("FORBIDDEN", {
-                message: "This PainCave instance already has a registered owner account.",
-              });
+            if (allowedEmails.length > 0) {
+              if (!allowedEmails.includes(normalized)) {
+                throw new APIError("FORBIDDEN", {
+                  message: "Signups are restricted to invited accounts on this instance.",
+                });
+              }
+            } else {
+              const countRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM user").first<{
+                cnt: number;
+              }>();
+              if ((countRow?.cnt ?? 0) >= 1) {
+                throw new APIError("FORBIDDEN", {
+                  message: "This PainCave instance already has a registered owner account.",
+                });
+              }
             }
 
             return {
@@ -153,6 +247,18 @@ export function createBetterAuth(env: AppEnv, requestUrl: string) {
                 email: normalized,
               },
             };
+          },
+          after: async (user) => {
+            const countRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM user").first<{
+              cnt: number;
+            }>();
+            const isFirstUser = (countRow?.cnt ?? 0) <= 1;
+            if (isFirstUser) {
+              await adoptDefaultOwnerRows(env.DB, user.id);
+              await ensureAthleteProfile(env.DB, user.id, user.name, true);
+            } else {
+              await ensureAthleteProfile(env.DB, user.id, user.name, false);
+            }
           },
         },
       },

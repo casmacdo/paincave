@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BridgeCommand, RoutePayload } from "@paincave/shared";
-import { api, type AthleteThreshold, type AuthState } from "./lib/api.js";
+import { api, type AthleteProfile, type AthleteThreshold, type AuthState } from "./lib/api.js";
 import {
   BridgeClient,
   DEFAULT_BRIDGE_WS_URL,
@@ -26,6 +26,7 @@ export function App() {
     authenticated: false,
     configured: true,
   });
+  const [profile, setProfile] = useState<AthleteProfile | null>(null);
   const [thresholds, setThresholds] = useState<AthleteThreshold | null>(null);
   const [bridgeUrl, setBridgeUrl] = useState(() => {
     if (typeof window !== "undefined") {
@@ -62,7 +63,12 @@ export function App() {
 
   const refreshProfile = useCallback(async () => {
     const prof = await api.getProfile();
+    setProfile(prof.profile);
     setThresholds(prof.latest_thresholds);
+    const trainerEnabled = prof.profile?.features?.indoor_trainer ?? true;
+    if (!trainerEnabled) {
+      setTab((prev) => (prev === "ride" || prev === "routes" ? "analytics" : prev));
+    }
   }, []);
 
   const refreshAuthState = useCallback(async () => {
@@ -142,6 +148,22 @@ export function App() {
   }
 
   const ftpWatts = thresholds?.ftp_watts ?? 250;
+  const indoorTrainerEnabled = profile?.features?.indoor_trainer ?? true;
+  const navItems: readonly [TabKey, string][] = indoorTrainerEnabled
+    ? [
+        ["ride", "Ride"],
+        ["calendar", "Calendar"],
+        ["workouts", "Workouts"],
+        ["routes", "Routes"],
+        ["analytics", "Analytics"],
+        ["settings", "Settings"],
+      ]
+    : [
+        ["calendar", "Calendar"],
+        ["workouts", "Workouts"],
+        ["analytics", "Analytics"],
+        ["settings", "Settings"],
+      ];
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -152,16 +174,7 @@ export function App() {
               Pain<span className="text-orange-500">Cave</span>
             </span>
             <nav className="flex gap-1">
-              {(
-                [
-                  ["ride", "Ride"],
-                  ["calendar", "Calendar"],
-                  ["workouts", "Workouts"],
-                  ["routes", "Routes"],
-                  ["analytics", "Analytics"],
-                  ["settings", "Settings"],
-                ] as const
-              ).map(([key, label]) => (
+              {navItems.map(([key, label]) => (
                 <button
                   key={key}
                   type="button"
@@ -179,21 +192,25 @@ export function App() {
           </div>
 
           <div className="flex items-center gap-3 text-xs">
-            <span
-              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium ${
-                bridgeSnapshot.connected
-                  ? "bg-emerald-500/15 text-emerald-300"
-                  : "bg-zinc-800 text-zinc-400"
-              }`}
-            >
+            {indoorTrainerEnabled && (
               <span
-                className={`h-2 w-2 rounded-full ${
-                  bridgeSnapshot.connected ? "bg-emerald-400" : "bg-zinc-500"
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium ${
+                  bridgeSnapshot.connected
+                    ? "bg-emerald-500/15 text-emerald-300"
+                    : "bg-zinc-800 text-zinc-400"
                 }`}
-              />
-              {bridgeSnapshot.connected ? "Bridge Connected" : "Bridge Offline"}
-            </span>
-            <span className="text-zinc-400">FTP {ftpWatts}W</span>
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    bridgeSnapshot.connected ? "bg-emerald-400" : "bg-zinc-500"
+                  }`}
+                />
+                {bridgeSnapshot.connected ? "Bridge Connected" : "Bridge Offline"}
+              </span>
+            )}
+            {thresholds?.ftp_watts && (
+              <span className="text-zinc-400">FTP {thresholds.ftp_watts}W</span>
+            )}
             {authState.user && (
               <span className="hidden rounded-full border border-zinc-800 bg-zinc-950 px-2.5 py-1 text-zinc-300 sm:inline">
                 {authState.user.name}
@@ -204,7 +221,7 @@ export function App() {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-6">
-        {tab === "ride" && (
+        {tab === "ride" && indoorTrainerEnabled && (
           <RidePage
             snapshot={bridgeSnapshot}
             ftpWatts={ftpWatts}
@@ -215,7 +232,7 @@ export function App() {
         {tab === "workouts" && (
           <WorkoutsPage ftpWatts={ftpWatts} onLoadWorkout={handleLoadWorkoutOnTrainer} />
         )}
-        {tab === "routes" && (
+        {tab === "routes" && indoorTrainerEnabled && (
           <RoutesPage
             onLoadRoute={handleLoadRouteOnTrainer}
             onLoadWorkoutWithRoute={(workoutId, route) =>
@@ -229,6 +246,7 @@ export function App() {
             bridgeUrl={bridgeUrl}
             onChangeBridgeUrl={handleChangeBridgeUrl}
             bridgeSnapshot={bridgeSnapshot}
+            profile={profile}
             latestThresholds={thresholds}
             onThresholdsUpdated={refreshProfile}
             authState={authState}

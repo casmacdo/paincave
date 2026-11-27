@@ -1,5 +1,6 @@
 import { parseFitRecords } from "@paincave/shared";
 import type { AppEnv } from "../types.js";
+import { DEFAULT_OWNER_USER_ID } from "./better-auth.js";
 import { logJson } from "./logger.js";
 
 const STRAVA_AUTHORIZE_URL = "https://www.strava.com/oauth/authorize";
@@ -55,6 +56,7 @@ export function buildStravaAuthorizeUrl(env: AppEnv, redirectUri: string, state:
 
 async function upsertStravaToken(
   env: AppEnv,
+  userId: string,
   token: {
     access_token: string;
     refresh_token: string;
@@ -65,17 +67,18 @@ async function upsertStravaToken(
 ): Promise<StravaTokenRow> {
   const nowIso = new Date().toISOString();
   await env.DB.prepare(
-    `INSERT INTO oauth_tokens (provider, access_token, refresh_token, expires_at, scope, athlete_external_id, updated_at)
-     VALUES ('strava', ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(provider) DO UPDATE SET
+    `INSERT INTO provider_connections (user_id, provider, access_token, refresh_token, expires_at, scope, external_athlete_id, updated_at)
+     VALUES (?, 'strava', ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, provider) DO UPDATE SET
        access_token = excluded.access_token,
        refresh_token = excluded.refresh_token,
        expires_at = excluded.expires_at,
        scope = excluded.scope,
-       athlete_external_id = COALESCE(excluded.athlete_external_id, oauth_tokens.athlete_external_id),
+       external_athlete_id = COALESCE(excluded.external_athlete_id, provider_connections.external_athlete_id),
        updated_at = excluded.updated_at`
   )
     .bind(
+      userId,
       token.access_token,
       token.refresh_token,
       token.expires_at,
@@ -98,7 +101,8 @@ async function upsertStravaToken(
 
 export async function exchangeStravaCode(
   env: AppEnv,
-  code: string
+  code: string,
+  userId = DEFAULT_OWNER_USER_ID
 ): Promise<StravaTokenRow> {
   if (!env.STRAVA_CLIENT_ID || !env.STRAVA_CLIENT_SECRET) {
     throw new Error("Strava client credentials are not configured");
@@ -127,7 +131,7 @@ export async function exchangeStravaCode(
     throw new Error("Invalid Strava token response payload");
   }
 
-  return upsertStravaToken(env, {
+  return upsertStravaToken(env, userId, {
     access_token: payload.access_token,
     refresh_token: payload.refresh_token,
     expires_at: payload.expires_at,
@@ -136,14 +140,29 @@ export async function exchangeStravaCode(
   });
 }
 
-export async function getStravaTokenRow(env: AppEnv): Promise<StravaTokenRow | null> {
-  return env.DB.prepare(
-    "SELECT provider, access_token, refresh_token, expires_at, scope, athlete_external_id, updated_at FROM oauth_tokens WHERE provider = 'strava'"
-  ).first<StravaTokenRow>();
+export async function getStravaTokenRow(
+  env: AppEnv,
+  userId = DEFAULT_OWNER_USER_ID
+): Promise<StravaTokenRow | null> {
+  const row = await env.DB.prepare(
+    `SELECT provider, access_token, refresh_token, expires_at, scope,
+            external_athlete_id AS athlete_external_id, updated_at
+     FROM provider_connections
+     WHERE user_id = ? AND provider = 'strava'`
+  )
+    .bind(userId)
+    .first<StravaTokenRow>();
+  if (!row || !row.access_token || !row.refresh_token || !row.expires_at) {
+    return null;
+  }
+  return row;
 }
 
-export async function getValidStravaAccessToken(env: AppEnv): Promise<string | null> {
-  const row = await getStravaTokenRow(env);
+export async function getValidStravaAccessToken(
+  env: AppEnv,
+  userId = DEFAULT_OWNER_USER_ID
+): Promise<string | null> {
+  const row = await getStravaTokenRow(env, userId);
   if (!row) {
     return null;
   }
@@ -180,7 +199,7 @@ export async function getValidStravaAccessToken(env: AppEnv): Promise<string | n
     throw new Error("Invalid Strava refresh response payload");
   }
 
-  const updated = await upsertStravaToken(env, {
+  const updated = await upsertStravaToken(env, userId, {
     access_token: payload.access_token,
     refresh_token: payload.refresh_token,
     expires_at: payload.expires_at,
@@ -294,17 +313,26 @@ export function formatStravaRideDescription(
 
 export async function uploadFitToStrava(
   env: AppEnv,
-  rideUuid: string
+  rideUuid: string,
+  userId?: string
 ): Promise<{ status: string; upload_id: string | null; error: string | null }> {
   try {
     const [ride, intervalsRes] = await Promise.all([
-      env.DB.prepare(
-        `SELECT ride_uuid, name, source, notes, r2_fit_key, duration_s, work_kj, avg_power, np_watts,
-                intensity_factor, tss, avg_hr, compliance_pct, rpe, feel
-         FROM rides WHERE ride_uuid = ?`
-      )
-        .bind(rideUuid)
-        .first<StravaRideSummaryMeta>(),
+      userId
+        ? env.DB.prepare(
+            `SELECT ride_uuid, user_id, name, source, notes, r2_fit_key, duration_s, work_kj, avg_power, np_watts,
+                    intensity_factor, tss, avg_hr, compliance_pct, rpe, feel
+             FROM rides WHERE ride_uuid = ? AND user_id = ?`
+          )
+            .bind(rideUuid, userId)
+            .first<StravaRideSummaryMeta & { user_id: string }>()
+        : env.DB.prepare(
+            `SELECT ride_uuid, user_id, name, source, notes, r2_fit_key, duration_s, work_kj, avg_power, np_watts,
+                    intensity_factor, tss, avg_hr, compliance_pct, rpe, feel
+             FROM rides WHERE ride_uuid = ?`
+          )
+            .bind(rideUuid)
+            .first<StravaRideSummaryMeta & { user_id: string }>(),
       env.DB.prepare(
         `SELECT label, actual_duration_s, actual_avg_watts
          FROM ride_intervals
@@ -319,7 +347,7 @@ export async function uploadFitToStrava(
       return { status: "failed", upload_id: null, error: "Ride not found" };
     }
 
-    const accessToken = await getValidStravaAccessToken(env);
+    const accessToken = await getValidStravaAccessToken(env, ride.user_id);
     if (!accessToken) {
       await markStravaStatus(env, rideUuid, "not_connected", null, null, null);
       return { status: "not_connected", upload_id: null, error: "Strava is not connected" };
