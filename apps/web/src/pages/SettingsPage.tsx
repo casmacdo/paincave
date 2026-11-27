@@ -324,62 +324,33 @@ export function SettingsPage({
             )}
           </div>
 
-          {/* OAuth Social Providers */}
+          {/* Google OAuth Provider */}
           <div className="space-y-2.5 rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
-            <h3 className="text-sm font-bold text-white">Social Sign-In Providers</h3>
+            <h3 className="text-sm font-bold text-white">Google Sign-In</h3>
             <p className="text-[11px] text-zinc-400">
-              Set the Worker secrets below to enable OAuth buttons on the login screen (still locked to
-              your single owner account):
+              Google OAuth is locked to your single owner account via Better Auth.
             </p>
-            <div className="space-y-2 text-xs">
-              {(
-                [
-                  {
-                    id: "google",
-                    label: "Google",
-                    enabled: providers?.google ?? false,
-                    secrets: "GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET",
-                  },
-                  {
-                    id: "github",
-                    label: "GitHub",
-                    enabled: providers?.github ?? false,
-                    secrets: "GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET",
-                  },
-                  {
-                    id: "apple",
-                    label: "Apple",
-                    enabled: providers?.apple ?? false,
-                    secrets: "APPLE_CLIENT_ID, APPLE_CLIENT_SECRET",
-                  },
-                ] as const
-              ).map((p) => (
-                <div
-                  key={p.id}
-                  className="rounded-lg border border-zinc-800 bg-zinc-900 p-2.5"
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-white">Google</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                    providers?.google
+                      ? "bg-emerald-500/20 text-emerald-300"
+                      : "bg-zinc-800 text-zinc-400"
+                  }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-white">{p.label}</span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                        p.enabled
-                          ? "bg-emerald-500/20 text-emerald-300"
-                          : "bg-zinc-800 text-zinc-400"
-                      }`}
-                    >
-                      {p.enabled ? "Enabled" : "Not configured"}
-                    </span>
-                  </div>
-                  <div className="mt-1 font-mono text-[10px] text-zinc-400">
-                    Callback: {origin}/api/auth/callback/{p.id}
-                  </div>
-                  {!p.enabled && (
-                    <div className="mt-0.5 font-mono text-[10px] text-zinc-500">
-                      Secrets: {p.secrets}
-                    </div>
-                  )}
+                  {providers?.google ? "Enabled" : "Not configured"}
+                </span>
+              </div>
+              <div className="mt-1 font-mono text-[10px] text-zinc-400">
+                Callback: {origin}/api/auth/callback/google
+              </div>
+              {!providers?.google && (
+                <div className="mt-0.5 font-mono text-[10px] text-zinc-500">
+                  Secrets: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
                 </div>
-              ))}
+              )}
             </div>
           </div>
         </div>

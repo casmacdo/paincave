@@ -8,8 +8,6 @@ export interface AuthProvidersInfo {
   email_password: boolean;
   passkey: boolean;
   google: boolean;
-  github: boolean;
-  apple: boolean;
   legacy_password: boolean;
 }
 
@@ -51,8 +49,6 @@ export function getConfiguredProviders(env: AppEnv): AuthProvidersInfo {
     email_password: hasSecret,
     passkey: hasSecret,
     google: Boolean(hasSecret && env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
-    github: Boolean(hasSecret && env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
-    apple: Boolean(hasSecret && env.APPLE_CLIENT_ID && env.APPLE_CLIENT_SECRET),
     legacy_password: Boolean(env.UI_ADMIN_PASSWORD_HASH && env.SESSION_SIGNING_SECRET && env.SESSION_SIGNING_SECRET.length >= 16),
   };
 }
@@ -96,18 +92,6 @@ export function createBetterAuth(env: AppEnv, requestUrl: string) {
       clientSecret: env.GOOGLE_CLIENT_SECRET,
     };
   }
-  if (env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) {
-    socialProviders["github"] = {
-      clientId: env.GITHUB_CLIENT_ID,
-      clientSecret: env.GITHUB_CLIENT_SECRET,
-    };
-  }
-  if (env.APPLE_CLIENT_ID && env.APPLE_CLIENT_SECRET) {
-    socialProviders["apple"] = {
-      clientId: env.APPLE_CLIENT_ID,
-      clientSecret: env.APPLE_CLIENT_SECRET,
-    };
-  }
 
   return betterAuth({
     appName: "PainCave",
@@ -129,7 +113,7 @@ export function createBetterAuth(env: AppEnv, requestUrl: string) {
     account: {
       accountLinking: {
         enabled: true,
-        trustedProviders: ["google", "github", "apple"],
+        trustedProviders: ["google"],
       },
     },
     socialProviders,

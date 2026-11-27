@@ -4,8 +4,6 @@ export interface AuthProvidersInfo {
   email_password: boolean;
   passkey: boolean;
   google: boolean;
-  github: boolean;
-  apple: boolean;
   legacy_password: boolean;
 }
 

@@ -34,8 +34,6 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
     email_password: true,
     passkey: true,
     google: false,
-    github: false,
-    apple: false,
     legacy_password: true,
   };
   const hasOwner = authState.has_owner ?? false;
@@ -94,20 +92,20 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
     }
   };
 
-  const handleSocialSignIn = async (provider: "google" | "github" | "apple") => {
+  const handleGoogleSignIn = async () => {
     setSubmitting(true);
     setError(null);
     try {
       const res = await authClient.signIn.social({
-        provider,
+        provider: "google",
         callbackURL: returnTo,
         errorCallbackURL: "/",
       });
       if (res.error) {
-        setError(res.error.message ?? `Could not start ${provider} sign-in`);
+        setError(res.error.message ?? "Could not start Google sign-in");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Could not start ${provider} sign-in`);
+      setError(err instanceof Error ? err.message : "Could not start Google sign-in");
     } finally {
       setSubmitting(false);
     }
@@ -145,8 +143,6 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
     }
   };
 
-  const anySocialEnabled = providers.google || providers.github || providers.apple;
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-4">
       <div className="w-full max-w-md space-y-5 rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
@@ -183,37 +179,17 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
           </div>
         )}
 
-        {/* Social OAuth + Passkey Buttons */}
-        {(anySocialEnabled || (providers.passkey && hasOwner)) && (
+        {/* Google OAuth + Passkey Buttons */}
+        {(providers.google || (providers.passkey && hasOwner)) && (
           <div className="space-y-2.5">
             {providers.google && (
               <button
                 type="button"
                 disabled={submitting}
-                onClick={() => void handleSocialSignIn("google")}
+                onClick={() => void handleGoogleSignIn()}
                 className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950 py-2.5 text-sm font-semibold text-white transition hover:border-zinc-500 hover:bg-zinc-800 disabled:opacity-60"
               >
                 Continue with Google
-              </button>
-            )}
-            {providers.github && (
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={() => void handleSocialSignIn("github")}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950 py-2.5 text-sm font-semibold text-white transition hover:border-zinc-500 hover:bg-zinc-800 disabled:opacity-60"
-              >
-                Continue with GitHub
-              </button>
-            )}
-            {providers.apple && (
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={() => void handleSocialSignIn("apple")}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950 py-2.5 text-sm font-semibold text-white transition hover:border-zinc-500 hover:bg-zinc-800 disabled:opacity-60"
-              >
-                Continue with Apple
               </button>
             )}
             {providers.passkey && hasOwner && (

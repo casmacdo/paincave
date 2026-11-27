@@ -39,8 +39,6 @@ describe("AuthScreen (Single-User Better Auth)", () => {
             email_password: true,
             passkey: true,
             google: false,
-            github: false,
-            apple: false,
             legacy_password: true,
           },
         }}
@@ -85,8 +83,6 @@ describe("AuthScreen (Single-User Better Auth)", () => {
             email_password: true,
             passkey: true,
             google: true,
-            github: false,
-            apple: false,
             legacy_password: false,
           },
         }}
@@ -129,8 +125,6 @@ describe("AuthScreen (Single-User Better Auth)", () => {
             email_password: true,
             passkey: true,
             google: true,
-            github: false,
-            apple: false,
             legacy_password: false,
           },
         }}

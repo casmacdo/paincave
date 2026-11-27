@@ -5,10 +5,6 @@ export interface WorkerSecrets {
   ALLOWED_OWNER_EMAIL?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
-  GITHUB_CLIENT_ID?: string;
-  GITHUB_CLIENT_SECRET?: string;
-  APPLE_CLIENT_ID?: string;
-  APPLE_CLIENT_SECRET?: string;
   BRIDGE_DEVICE_TOKEN?: string;
   MCP_BEARER_TOKEN?: string;
   STRAVA_CLIENT_ID?: string;
