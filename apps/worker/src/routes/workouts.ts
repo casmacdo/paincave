@@ -51,9 +51,10 @@ export function createWorkoutRoutes(): Hono<HonoAppContext> {
 
   router.post("/", async (c) => {
     const body: unknown = await c.req.json().catch(() => null);
+    const createdBy = c.req.query("source") === "import" ? "import" : "user";
     const res = await saveValidatedWorkout(c.env.DB, {
       rawSpec: body,
-      createdBy: "user",
+      createdBy,
     });
     if (!res.ok) {
       return c.json({ error: res.error, details: res.details }, res.status);

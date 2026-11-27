@@ -165,12 +165,15 @@ export const api = {
   getNotes: () => requestJson<{ notes: { id: string; category: string; content: string }[] }>("/api/athlete/notes"),
 
   getWorkouts: () => requestJson<{ workouts: WorkoutRecord[] }>("/api/workouts"),
-  createWorkout: (spec: WorkoutSpec) =>
-    requestJson<{ workout: WorkoutRecord }>("/api/workouts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(spec),
-    }),
+  createWorkout: (spec: WorkoutSpec, source?: "user" | "import") =>
+    requestJson<{ workout: WorkoutRecord; warnings?: string[] }>(
+      source === "import" ? "/api/workouts?source=import" : "/api/workouts",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(spec),
+      }
+    ),
   updateWorkout: (id: string, spec: WorkoutSpec) =>
     requestJson<{ workout: WorkoutRecord }>(`/api/workouts/${encodeURIComponent(id)}`, {
       method: "PUT",
@@ -195,6 +198,33 @@ export const api = {
       planned_sessions: PlannedSessionRecord[];
       completed_rides: RideRecord[];
     }>(`/api/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
+  scheduleSession: (payload: {
+    scheduled_date: string;
+    workout_id: string;
+    coach_rationale?: string;
+    replace_existing?: boolean;
+  }) =>
+    requestJson<{ session: PlannedSessionRecord; warnings: string[] }>("/api/calendar/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  updateCalendarSession: (
+    id: string,
+    payload: {
+      scheduled_date?: string;
+      status?: "planned" | "completed" | "skipped";
+      coach_rationale?: string;
+    }
+  ) =>
+    requestJson<{ session: PlannedSessionRecord }>(
+      `/api/calendar/sessions/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    ),
   deleteCalendarSession: (id: string) =>
     requestJson<{ ok: boolean }>(`/api/calendar/sessions/${encodeURIComponent(id)}`, {
       method: "DELETE",

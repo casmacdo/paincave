@@ -4,6 +4,7 @@ export * from "./workout/schema.js";
 export * from "./workout/flatten.js";
 export * from "./workout/guardrails.js";
 export * from "./workout/export.js";
+export * from "./workout/import.js";
 export * from "./physiology/mmp.js";
 export * from "./physiology/cp.js";
 export * from "./physiology/pmc.js";

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   WORKOUT_CATEGORIES,
   WorkoutSpecSchema,
   flattenWorkout,
+  importWorkoutFile,
   type FlattenedStep,
   type WorkoutCategory,
   type WorkoutSpec,
@@ -156,6 +157,14 @@ function matchesDuration(durationS: number, filter: DurationFilter): boolean {
   return true;
 }
 
+function localTodayIso(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 interface ParsedWorkoutItem {
   record: WorkoutRecord;
   spec: WorkoutSpec | null;
@@ -173,9 +182,20 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("grouped");
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; warnings?: string[] } | null>(null);
   const [loadingWorkoutId, setLoadingWorkoutId] = useState<string | null>(null);
   const [movingCategoryId, setMovingCategoryId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Schedule modal state
+  const [schedulingWorkout, setSchedulingWorkout] = useState<WorkoutRecord | null>(null);
+  const [scheduleDate, setScheduleDate] = useState<string>(localTodayIso);
+  const [scheduleNote, setScheduleNote] = useState("");
+  const [replaceExisting, setReplaceExisting] = useState(false);
+  const [scheduleSubmitting, setScheduleSubmitting] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -375,6 +395,86 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
     }
   };
 
+  const handleImportFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setImporting(true);
+    setError(null);
+    setNotice(null);
+
+    const created: WorkoutRecord[] = [];
+    const warnings: string[] = [];
+    const errors: string[] = [];
+
+    try {
+      for (const file of Array.from(files)) {
+        try {
+          const text = await file.text();
+          const spec = importWorkoutFile(file.name, text, ftpWatts);
+          const res = await api.createWorkout(spec, "import");
+          created.push(res.workout);
+          if (res.warnings && res.warnings.length > 0) {
+            warnings.push(...res.warnings.map((w) => `${res.workout.name}: ${w}`));
+          }
+        } catch (err) {
+          errors.push(
+            `${file.name}: ${err instanceof Error ? err.message : "Failed to import workout"}`
+          );
+        }
+      }
+
+      if (created.length > 0) {
+        setWorkouts((current) => [...created, ...current]);
+        setNotice({
+          text:
+            created.length === 1
+              ? `Imported "${created[0]?.name ?? "workout"}" into ${getCategoryMeta(created[0]?.category ?? "custom").label}.`
+              : `Imported ${created.length} workouts into your library.`,
+          warnings: warnings.length > 0 ? warnings : undefined,
+        });
+      }
+      if (errors.length > 0) {
+        setError(errors.join(" · "));
+      }
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const openScheduleModal = (workout: WorkoutRecord) => {
+    setSchedulingWorkout(workout);
+    setScheduleDate(localTodayIso());
+    setScheduleNote("");
+    setReplaceExisting(false);
+    setScheduleError(null);
+  };
+
+  const handleScheduleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!schedulingWorkout) return;
+    setScheduleSubmitting(true);
+    setScheduleError(null);
+    try {
+      const res = await api.scheduleSession({
+        scheduled_date: scheduleDate,
+        workout_id: schedulingWorkout.id,
+        coach_rationale: scheduleNote.trim() || undefined,
+        replace_existing: replaceExisting,
+      });
+      setNotice({
+        text: `Scheduled "${schedulingWorkout.name}" for ${scheduleDate}.`,
+        warnings: res.warnings.length > 0 ? res.warnings : undefined,
+      });
+      setSchedulingWorkout(null);
+    } catch (err) {
+      setScheduleError(err instanceof Error ? err.message : "Failed to schedule workout");
+    } finally {
+      setScheduleSubmitting(false);
+    }
+  };
+
   const renderCard = (item: ParsedWorkoutItem) => {
     const { record: w, steps, categoryMeta } = item;
     const currentCategoryValue: WorkoutCategory = isWorkoutCategory(w.category)
@@ -409,14 +509,23 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
               )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => void handleLoad(w.id)}
-              disabled={loadingWorkoutId === w.id}
-              className="shrink-0 rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {loadingWorkoutId === w.id ? "Loading..." : "Load on Trainer"}
-            </button>
+            <div className="flex shrink-0 flex-col gap-1.5 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => openScheduleModal(w)}
+                className="rounded-lg border border-zinc-700 bg-zinc-800/80 px-2.5 py-2 text-xs font-semibold text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800 hover:text-white"
+              >
+                Schedule
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleLoad(w.id)}
+                disabled={loadingWorkoutId === w.id}
+                className="rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loadingWorkoutId === w.id ? "Loading..." : "Load on Trainer"}
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-3 gap-2 rounded-xl bg-zinc-950/70 px-3 py-2 text-xs">
@@ -511,6 +620,24 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".zwo,.erg,.mrc,application/xml,text/plain"
+            multiple
+            aria-label="Import workout file"
+            onChange={(e) => void handleImportFiles(e.target.files)}
+            className="hidden"
+          />
+          <button
+            type="button"
+            disabled={importing}
+            onClick={() => fileInputRef.current?.click()}
+            className="rounded-lg border border-orange-500/40 bg-orange-500/15 px-3 py-1.5 text-sm font-semibold text-orange-200 hover:bg-orange-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {importing ? "Importing..." : "Import .zwo / .erg / .mrc"}
+          </button>
+
           <input
             type="search"
             value={search}
@@ -653,6 +780,31 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
         </div>
       )}
 
+      {notice && (
+        <div
+          role="status"
+          className="flex items-start justify-between gap-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-200"
+        >
+          <div className="space-y-1">
+            <div>{notice.text}</div>
+            {notice.warnings && notice.warnings.length > 0 && (
+              <ul className="list-disc pl-5 text-xs text-amber-300">
+                {notice.warnings.map((w, idx) => (
+                  <li key={idx}>{w}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            className="text-xs text-emerald-300/80 hover:text-emerald-100"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {error && (
         <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-200">
           {error}
@@ -726,6 +878,108 @@ export function WorkoutsPage({ ftpWatts, onLoadWorkout }: WorkoutsPageProps) {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {filteredAndSorted.map((item) => renderCard(item))}
+        </div>
+      )}
+
+      {/* Self-Service Schedule Modal */}
+      {schedulingWorkout && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !scheduleSubmitting) {
+              setSchedulingWorkout(null);
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="schedule-modal-title"
+            className="w-full max-w-md space-y-4 rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl"
+          >
+            <div>
+              <h2 id="schedule-modal-title" className="text-lg font-bold text-white">
+                Schedule Workout
+              </h2>
+              <p className="mt-0.5 text-xs text-zinc-400">
+                {schedulingWorkout.name} · {formatDurationLabel(schedulingWorkout.duration_s)}
+                {schedulingWorkout.predicted_tss !== null
+                  ? ` · TSS ${Math.round(schedulingWorkout.predicted_tss)}`
+                  : ""}
+              </p>
+            </div>
+
+            <form onSubmit={(e) => void handleScheduleSubmit(e)} className="space-y-3.5">
+              <div>
+                <label
+                  htmlFor="schedule-workout-date"
+                  className="block text-xs font-semibold uppercase tracking-wider text-zinc-400"
+                >
+                  Date
+                </label>
+                <input
+                  id="schedule-workout-date"
+                  type="date"
+                  required
+                  value={scheduleDate}
+                  onChange={(e) => setScheduleDate(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white focus:border-orange-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="schedule-workout-note"
+                  className="block text-xs font-semibold uppercase tracking-wider text-zinc-400"
+                >
+                  Session Note (optional)
+                </label>
+                <input
+                  id="schedule-workout-note"
+                  type="text"
+                  maxLength={1000}
+                  value={scheduleNote}
+                  onChange={(e) => setScheduleNote(e.target.value)}
+                  placeholder="e.g. Fuel 60g carbs/hr, keep cadence 90rpm"
+                  className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-orange-500 focus:outline-none"
+                />
+              </div>
+
+              <label className="flex items-center gap-2 text-xs text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={replaceExisting}
+                  onChange={(e) => setReplaceExisting(e.target.checked)}
+                  className="h-4 w-4 rounded border-zinc-600 bg-zinc-950 accent-orange-500"
+                />
+                Replace existing planned session on this day
+              </label>
+
+              {scheduleError && (
+                <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-2.5 text-xs text-rose-200">
+                  {scheduleError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={scheduleSubmitting}
+                  onClick={() => setSchedulingWorkout(null)}
+                  className="rounded-lg border border-zinc-700 px-3.5 py-2 text-xs font-semibold text-zinc-300 hover:border-zinc-500 hover:text-white disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={scheduleSubmitting || !scheduleDate}
+                  className="rounded-lg bg-orange-500 px-4 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {scheduleSubmitting ? "Scheduling..." : "Add to Calendar"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

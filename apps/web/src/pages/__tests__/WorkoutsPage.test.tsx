@@ -156,4 +156,112 @@ describe("WorkoutsPage organization & categories", () => {
       "workout-card-w-end",
     ]);
   });
+
+  it("imports a .zwo workout file and adds it to the library", async () => {
+    vi.spyOn(api, "getWorkouts").mockResolvedValue({ workouts: SAMPLE_WORKOUTS });
+    const createSpy = vi.spyOn(api, "createWorkout").mockImplementation((spec) =>
+      Promise.resolve({
+        workout: makeWorkout({
+          id: "w-imported",
+          name: spec.name,
+          description: spec.description,
+          category: spec.category,
+          duration_s: 2400,
+          created_by: "import",
+        }),
+      })
+    );
+
+    render(<WorkoutsPage ftpWatts={260} onLoadWorkout={vi.fn().mockResolvedValue(undefined)} />);
+    await screen.findByText("Sweet Spot 2x20");
+
+    const zwoXml = `<?xml version="1.0" encoding="UTF-8"?>
+<workout_file>
+  <name>Threshold Cruise 2x15</name>
+  <description>Imported threshold intervals</description>
+  <workout>
+    <Warmup Duration="300" PowerLow="0.5" PowerHigh="0.75" />
+    <IntervalsT Repeat="2" OnDuration="900" OffDuration="150" OnPower="0.98" OffPower="0.55" />
+  </workout>
+</workout_file>`;
+    const file = new File([zwoXml], "threshold_cruise.zwo", { type: "application/xml" });
+    Object.defineProperty(file, "text", {
+      value: () => Promise.resolve(zwoXml),
+    });
+
+    const input = screen.getByLabelText("Import workout file");
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Threshold Cruise 2x15",
+          category: "threshold",
+        }),
+        "import"
+      );
+    });
+    expect(await screen.findByText("Threshold Cruise 2x15")).toBeTruthy();
+    expect(screen.getByTestId("workout-category-section-threshold")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("Imported");
+  });
+
+  it("opens the schedule modal, shows conflict errors, and schedules a workout with warnings", async () => {
+    vi.spyOn(api, "getWorkouts").mockResolvedValue({ workouts: SAMPLE_WORKOUTS });
+    const scheduleSpy = vi
+      .spyOn(api, "scheduleSession")
+      .mockRejectedValueOnce(new Error("A session is already planned on 2026-12-01"))
+      .mockResolvedValueOnce({
+        session: {
+          id: "sess-1",
+          scheduled_date: "2026-12-01",
+          workout_id: "w-ss",
+          status: "planned",
+          coach_rationale: "Fuel 60g/hr",
+          completed_ride_uuid: null,
+          workout_name: "Sweet Spot 2x20",
+          workout_category: "sweet_spot",
+          planned_duration_s: 3600,
+          predicted_if: 0.89,
+          predicted_tss: 80,
+        },
+        warnings: ["Tuesday max duration is 45 min"],
+      });
+
+    render(<WorkoutsPage ftpWatts={260} onLoadWorkout={vi.fn().mockResolvedValue(undefined)} />);
+    const ssCard = await screen.findByTestId("workout-card-w-ss");
+
+    fireEvent.click(within(ssCard).getByRole("button", { name: "Schedule" }));
+    const dialog = screen.getByRole("dialog");
+
+    fireEvent.change(within(dialog).getByLabelText("Date"), {
+      target: { value: "2026-12-01" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Session Note (optional)"), {
+      target: { value: "Fuel 60g/hr" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to Calendar" }));
+
+    // Conflict displayed inside modal
+    expect(
+      await within(dialog).findByText("A session is already planned on 2026-12-01")
+    ).toBeTruthy();
+
+    // Check replace existing and resubmit
+    fireEvent.click(within(dialog).getByLabelText(/Replace existing planned session/i));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to Calendar" }));
+
+    await waitFor(() => {
+      expect(scheduleSpy).toHaveBeenLastCalledWith({
+        scheduled_date: "2026-12-01",
+        workout_id: "w-ss",
+        coach_rationale: "Fuel 60g/hr",
+        replace_existing: true,
+      });
+    });
+
+    const notice = await screen.findByRole("status");
+    expect(notice.textContent).toContain('Scheduled "Sweet Spot 2x20" for 2026-12-01.');
+    expect(notice.textContent).toContain("Tuesday max duration is 45 min");
+  });
 });

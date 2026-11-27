@@ -1,5 +1,10 @@
-import { useEffect, useState } from "react";
-import { api, type PlannedSessionRecord, type RideRecord } from "../lib/api.js";
+import { useCallback, useEffect, useState } from "react";
+import {
+  api,
+  type PlannedSessionRecord,
+  type RideRecord,
+  type WorkoutRecord,
+} from "../lib/api.js";
 
 interface CalendarPageProps {
   onLoadWorkout: (workoutId: string, plannedSessionId?: string) => Promise<void>;
@@ -10,38 +15,123 @@ function isoDateOffset(base: Date, deltaDays: number): string {
   return dt.toISOString().slice(0, 10);
 }
 
+function localTodayIso(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
   const [sessions, setSessions] = useState<PlannedSessionRecord[]>([]);
   const [rides, setRides] = useState<RideRecord[]>([]);
+  const [workouts, setWorkouts] = useState<WorkoutRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; warnings?: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  // Schedule drawer state
+  const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [selectedWorkoutId, setSelectedWorkoutId] = useState("");
+  const [scheduleDate, setScheduleDate] = useState(localTodayIso);
+  const [scheduleNote, setScheduleNote] = useState("");
+  const [replaceExisting, setReplaceExisting] = useState(false);
+  const [scheduleSubmitting, setScheduleSubmitting] = useState(false);
 
   const now = new Date();
   const start = isoDateOffset(now, -7);
   const end = isoDateOffset(now, 14);
 
-  useEffect(() => {
-    let active = true;
+  const loadCalendar = useCallback(async () => {
     setLoading(true);
-    api
-      .getCalendar(start, end)
-      .then((res) => {
-        if (!active) return;
-        setSessions(res.planned_sessions);
-        setRides(res.completed_rides);
-      })
-      .catch((err: unknown) => {
-        if (!active) return;
-        setError(err instanceof Error ? err.message : "Failed to load calendar");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
+    try {
+      const [calRes, workoutsRes] = await Promise.all([
+        api.getCalendar(start, end),
+        api.getWorkouts(),
+      ]);
+      setSessions(calRes.planned_sessions);
+      setRides(calRes.completed_rides);
+      setWorkouts(workoutsRes.workouts);
+      if (workoutsRes.workouts.length > 0) {
+        setSelectedWorkoutId((current) => current || (workoutsRes.workouts[0]?.id ?? ""));
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load calendar");
+    } finally {
+      setLoading(false);
+    }
   }, [start, end]);
+
+  useEffect(() => {
+    void loadCalendar();
+  }, [loadCalendar]);
+
+  const handleScheduleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedWorkoutId || !scheduleDate) return;
+    setScheduleSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await api.scheduleSession({
+        scheduled_date: scheduleDate,
+        workout_id: selectedWorkoutId,
+        coach_rationale: scheduleNote.trim() || undefined,
+        replace_existing: replaceExisting,
+      });
+      const chosen = workouts.find((w) => w.id === selectedWorkoutId);
+      setNotice({
+        text: `Scheduled "${chosen?.name ?? "workout"}" for ${scheduleDate}.`,
+        warnings: res.warnings.length > 0 ? res.warnings : undefined,
+      });
+      setScheduleNote("");
+      setReplaceExisting(false);
+      setShowScheduleForm(false);
+      await loadCalendar();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to schedule workout");
+    } finally {
+      setScheduleSubmitting(false);
+    }
+  };
+
+  const handleRescheduleDate = async (session: PlannedSessionRecord, nextDate: string) => {
+    if (!nextDate || nextDate === session.scheduled_date) return;
+    setUpdatingId(session.id);
+    setError(null);
+    try {
+      await api.updateCalendarSession(session.id, { scheduled_date: nextDate });
+      setSessions((current) =>
+        current
+          .map((item) => (item.id === session.id ? { ...item, scheduled_date: nextDate } : item))
+          .sort((a, b) => a.scheduled_date.localeCompare(b.scheduled_date))
+      );
+      setNotice({ text: `Moved "${session.workout_name}" to ${nextDate}.` });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to move planned workout");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleToggleSkip = async (session: PlannedSessionRecord) => {
+    const nextStatus = session.status === "skipped" ? "planned" : "skipped";
+    setUpdatingId(session.id);
+    setError(null);
+    try {
+      await api.updateCalendarSession(session.id, { status: nextStatus });
+      setSessions((current) =>
+        current.map((item) => (item.id === session.id ? { ...item, status: nextStatus } : item))
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update session status");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
 
   const handleDeleteSession = async (session: PlannedSessionRecord) => {
     if (!window.confirm(`Remove "${session.workout_name}" from ${session.scheduled_date}?`)) {
@@ -88,14 +178,129 @@ export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white">Training Calendar</h1>
           <p className="text-sm text-zinc-400">
             Showing {start} through {end}
           </p>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setShowScheduleForm((open) => !open)}
+          disabled={workouts.length === 0}
+          className="rounded-lg bg-orange-500 px-3.5 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {showScheduleForm ? "Close Scheduler" : "+ Schedule Workout"}
+        </button>
       </div>
+
+      {showScheduleForm && (
+        <form
+          onSubmit={(e) => void handleScheduleSubmit(e)}
+          className="grid gap-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-4 md:grid-cols-4"
+        >
+          <div className="md:col-span-2">
+            <label
+              htmlFor="calendar-schedule-workout"
+              className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-400"
+            >
+              Workout
+            </label>
+            <select
+              id="calendar-schedule-workout"
+              value={selectedWorkoutId}
+              onChange={(e) => setSelectedWorkoutId(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white focus:border-orange-500 focus:outline-none"
+            >
+              {workouts.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name} ({Math.round(w.duration_s / 60)}m · TSS {w.predicted_tss ?? "--"})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label
+              htmlFor="calendar-schedule-date"
+              className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-400"
+            >
+              Date
+            </label>
+            <input
+              id="calendar-schedule-date"
+              type="date"
+              required
+              value={scheduleDate}
+              onChange={(e) => setScheduleDate(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white focus:border-orange-500 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="calendar-schedule-note"
+              className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-400"
+            >
+              Session Note
+            </label>
+            <input
+              id="calendar-schedule-note"
+              type="text"
+              value={scheduleNote}
+              onChange={(e) => setScheduleNote(e.target.value)}
+              placeholder="Optional note..."
+              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-orange-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 md:col-span-4">
+            <label className="flex items-center gap-2 text-xs text-zinc-300">
+              <input
+                type="checkbox"
+                checked={replaceExisting}
+                onChange={(e) => setReplaceExisting(e.target.checked)}
+                className="h-4 w-4 rounded border-zinc-600 bg-zinc-950 accent-orange-500"
+              />
+              Replace existing planned session on that day
+            </label>
+            <button
+              type="submit"
+              disabled={scheduleSubmitting || !selectedWorkoutId || !scheduleDate}
+              className="rounded-lg bg-orange-500 px-4 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:opacity-50"
+            >
+              {scheduleSubmitting ? "Scheduling..." : "Add to Calendar"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {notice && (
+        <div
+          role="status"
+          className="flex items-start justify-between gap-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-200"
+        >
+          <div className="space-y-1">
+            <div>{notice.text}</div>
+            {notice.warnings && notice.warnings.length > 0 && (
+              <ul className="list-disc pl-5 text-xs text-amber-300">
+                {notice.warnings.map((w, idx) => (
+                  <li key={idx}>{w}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            className="text-xs text-emerald-300/80 hover:text-emerald-100"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-200">
@@ -145,7 +350,27 @@ export function CalendarPage({ onLoadWorkout }: CalendarPageProps) {
                       <p className="mt-1 text-xs text-zinc-400">{s.coach_rationale}</p>
                     )}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {s.status !== "completed" && (
+                      <>
+                        <input
+                          type="date"
+                          aria-label={`Move ${s.workout_name} date`}
+                          value={s.scheduled_date}
+                          disabled={updatingId === s.id}
+                          onChange={(e) => void handleRescheduleDate(s, e.target.value)}
+                          className="rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200 focus:border-orange-500 focus:outline-none disabled:opacity-50"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void handleToggleSkip(s)}
+                          disabled={updatingId === s.id}
+                          className="rounded-lg border border-zinc-700 px-2.5 py-2 text-xs font-semibold text-zinc-300 hover:border-zinc-500 hover:text-white disabled:opacity-50"
+                        >
+                          {s.status === "skipped" ? "Restore" : "Skip"}
+                        </button>
+                      </>
+                    )}
                     <button
                       type="button"
                       onClick={() => void onLoadWorkout(s.workout_id, s.id)}
