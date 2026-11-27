@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { RideUploadSummarySchema } from "@paincave/shared";
+import { RideUploadSummarySchema, downsampleRecords, parseFitRecords } from "@paincave/shared";
 import type { HonoAppContext } from "../types.js";
 import { requireBridgeOrUiAuth, requireUiAuth } from "../lib/auth.js";
 import { ingestRide, type RideRow } from "../lib/rides-service.js";
@@ -186,6 +186,47 @@ export function createRideRoutes(): Hono<HonoAppContext> {
     await recomputePmcFromDay(c.env.DB, ride.ride_day);
 
     return c.json({ ok: true });
+  });
+
+  router.get("/:ride_uuid/timeseries", requireUiAuth, async (c) => {
+    const uuid = c.req.param("ride_uuid");
+    const rawBucket = Number(c.req.query("bucket_seconds") ?? 15);
+    const bucketSeconds = Number.isFinite(rawBucket)
+      ? Math.min(300, Math.max(5, Math.round(rawBucket)))
+      : 15;
+
+    const ride = await c.env.DB.prepare(
+      "SELECT ride_uuid, name, r2_fit_key FROM rides WHERE ride_uuid = ?"
+    )
+      .bind(uuid)
+      .first<{ ride_uuid: string; name: string; r2_fit_key: string }>();
+
+    if (!ride) {
+      return c.json({ error: "Ride not found" }, 404);
+    }
+
+    const obj = await c.env.RIDES_BUCKET.get(ride.r2_fit_key);
+    if (!obj) {
+      return c.json({ error: "FIT file not found in R2" }, 404);
+    }
+
+    try {
+      const bytes = new Uint8Array(await obj.arrayBuffer());
+      const parsed = parseFitRecords(bytes);
+      const points = downsampleRecords(parsed.samples, bucketSeconds);
+      return c.json({
+        ride_uuid: ride.ride_uuid,
+        name: ride.name,
+        bucket_seconds: bucketSeconds,
+        raw_samples: parsed.samples.length,
+        points,
+      });
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : "Unable to decode FIT timeseries" },
+        422
+      );
+    }
   });
 
   router.get("/:ride_uuid/fit", requireUiAuth, async (c) => {

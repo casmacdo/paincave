@@ -256,4 +256,107 @@ describe("Idempotent Ride Ingestion, PMC & Fitness Overview", () => {
     ).bind(rideUuid).first<{ workout_id: string | null }>();
     expect(ride?.workout_id).toBeNull();
   });
+
+  it("decodes and returns downsampled FIT timeseries for UI charts", async () => {
+    const cookie = await loginCookie();
+    const rideUuid = "550e8400-e29b-41d4-a716-446655440003";
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Build minimal 30-second valid FIT stream
+    const def = [
+      0x40, 0x00, 0x00, 20, 0, 4,
+      253, 4, 0x86,
+      3, 1, 0x02,
+      4, 1, 0x02,
+      7, 2, 0x84,
+    ];
+    const msgs: number[] = [];
+    for (let i = 0; i < 30; i++) {
+      const buf = new ArrayBuffer(9);
+      const dv = new DataView(buf);
+      dv.setUint8(0, 0x00);
+      dv.setUint32(1, 1_164_640_000 + i, true);
+      dv.setUint8(5, 148);
+      dv.setUint8(6, 90);
+      dv.setUint16(7, 240, true);
+      msgs.push(...new Uint8Array(buf));
+    }
+    const data = [...def, ...msgs];
+    const header = new Uint8Array(14);
+    const hv = new DataView(header.buffer);
+    hv.setUint8(0, 14);
+    hv.setUint8(1, 0x20);
+    hv.setUint16(2, 2100, true);
+    hv.setUint32(4, data.length, true);
+    header[8] = 0x2e;
+    header[9] = 0x46;
+    header[10] = 0x49;
+    header[11] = 0x54;
+    const fitBytes = new Uint8Array([...header, ...data, 0x00, 0x00]);
+
+    const form = new FormData();
+    form.append(
+      "summary",
+      JSON.stringify({
+        ride_uuid: rideUuid,
+        name: "Timeseries Test Ride",
+        source: "manual_fit",
+        started_at: `${today}T12:00:00Z`,
+        ride_day: today,
+        duration_s: 30,
+        elapsed_s: 30,
+        work_kj: 7.2,
+        avg_power: 240,
+        np_watts: 240,
+        intensity_factor: 0.92,
+        tss: 1,
+        variability_index: 1,
+        avg_hr: 148,
+        max_hr: 148,
+        efficiency_factor: 1.62,
+        pw_hr_decoupling: null,
+        hrr_60s: null,
+        time_gt_90_hrmax_s: 0,
+        avg_cadence: 90,
+        compliance_pct: null,
+        power_zones: { z1: 0, z2: 0, z3: 0, z4: 30, z5: 0, z6: 0, z7: 0 },
+        hr_zones: { z1: 0, z2: 30, z3: 0, z4: 0, z5: 0 },
+        quality_flags: { power_dropouts_s: 0, hr_dropouts_s: 0, erg_smoothing_detected: false },
+        ftp_snapshot: 260,
+        rpe: null,
+        feel: null,
+        notes: "",
+        intervals: [],
+        peaks: [],
+      })
+    );
+    form.append(
+      "fit",
+      new Blob([fitBytes], { type: "application/vnd.ant.fit" }),
+      "timeseries.fit"
+    );
+
+    const uploadRes = await exports.default.fetch("https://paincave.test/api/rides", {
+      method: "POST",
+      headers: { Cookie: cookie },
+      body: form,
+    });
+    expect(uploadRes.status).toBe(201);
+
+    const tsRes = await exports.default.fetch(
+      `https://paincave.test/api/rides/${rideUuid}/timeseries?bucket_seconds=10`,
+      { headers: { Cookie: cookie } }
+    );
+    expect(tsRes.status).toBe(200);
+    const tsBody = await tsRes.json<{
+      raw_samples: number;
+      bucket_seconds: number;
+      points: { t_s: number; watts: number; hr_bpm: number }[];
+    }>();
+    expect(tsBody.raw_samples).toBe(30);
+    expect(tsBody.bucket_seconds).toBe(10);
+    expect(tsBody.points).toHaveLength(3);
+    expect(tsBody.points[0]?.watts).toBe(240);
+    expect(tsBody.points[0]?.hr_bpm).toBe(148);
+  });
 });

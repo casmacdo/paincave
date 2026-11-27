@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { computeRideMetrics, parseFitRecords } from "@paincave/shared";
 import {
   api,
@@ -6,30 +6,79 @@ import {
   type FitnessOverviewResponse,
   type RideRecord,
 } from "../lib/api.js";
+import {
+  MmpCurveChart,
+  PmcChart,
+  RideTimeseriesChart,
+  WeeklyLoadChart,
+  type RideTimeseriesPoint,
+} from "../components/AnalyticsCharts.js";
+import { downloadRideSummaryPng } from "../lib/workout-summary-card.js";
 
 interface AnalyticsPageProps {
   thresholds: AthleteThreshold | null;
 }
 
 export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
+  const [rangeDays, setRangeDays] = useState<42 | 90>(42);
   const [overview, setOverview] = useState<FitnessOverviewResponse | null>(null);
   const [rides, setRides] = useState<RideRecord[]>([]);
   const [selectedDetail, setSelectedDetail] = useState<Awaited<
     ReturnType<typeof api.getRideDetail>
   > | null>(null);
+  const [timeseries, setTimeseries] = useState<RideTimeseriesPoint[]>([]);
+  const [loadingTimeseries, setLoadingTimeseries] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
-  const [deleteStatus, setDeleteStatus] = useState<string | null>(null);
+  const [actionStatus, setActionStatus] = useState<string | null>(null);
+  const [retryingStravaUuid, setRetryingStravaUuid] = useState<string | null>(null);
   const [deletingRideUuid, setDeletingRideUuid] = useState<string | null>(null);
 
-  const loadData = async () => {
-    const [ov, rs] = await Promise.all([api.getFitnessOverview(42), api.getRides(25)]);
+  const loadData = useCallback(async (days: 42 | 90) => {
+    const [ov, rs] = await Promise.all([api.getFitnessOverview(days), api.getRides(25)]);
     setOverview(ov);
     setRides(rs.rides);
-  };
+  }, []);
 
   useEffect(() => {
-    void loadData().catch(() => {});
-  }, []);
+    void loadData(rangeDays).catch(() => {});
+  }, [loadData, rangeDays]);
+
+  const handleSelectRide = async (rideUuid: string) => {
+    setActionStatus(null);
+    setLoadingTimeseries(true);
+    try {
+      const detail = await api.getRideDetail(rideUuid);
+      setSelectedDetail(detail);
+      const ts = await api.getRideTimeseries(rideUuid, 15).catch(() => null);
+      setTimeseries(ts?.points ?? []);
+    } catch (err) {
+      setActionStatus(err instanceof Error ? err.message : "Failed to load ride details");
+    } finally {
+      setLoadingTimeseries(false);
+    }
+  };
+
+  const handleRetryStrava = async (rideUuid: string) => {
+    setRetryingStravaUuid(rideUuid);
+    setActionStatus(null);
+    try {
+      const res = await api.retryStravaUpload(rideUuid);
+      setActionStatus(
+        res.status === "uploaded"
+          ? `Uploaded to Strava (upload ${res.upload_id ?? "queued"}).`
+          : `Strava status: ${res.status}${res.error ? ` — ${res.error}` : ""}`
+      );
+      await loadData(rangeDays);
+      if (selectedDetail?.ride.ride_uuid === rideUuid) {
+        const refreshed = await api.getRideDetail(rideUuid);
+        setSelectedDetail(refreshed);
+      }
+    } catch (err) {
+      setActionStatus(err instanceof Error ? err.message : "Strava retry failed");
+    } finally {
+      setRetryingStravaUuid(null);
+    }
+  };
 
   const handleFitUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -86,7 +135,7 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
         file
       );
       setUploadStatus(`Uploaded ${file.name} (${metrics.duration_s}s, TSS ${metrics.tss}).`);
-      await loadData();
+      await loadData(rangeDays);
     } catch (err) {
       setUploadStatus(err instanceof Error ? err.message : "FIT upload failed");
     }
@@ -102,17 +151,18 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
     }
 
     setDeletingRideUuid(ride.ride_uuid);
-    setDeleteStatus(null);
+    setActionStatus(null);
     try {
       await api.deleteRide(ride.ride_uuid);
       setRides((current) => current.filter((item) => item.ride_uuid !== ride.ride_uuid));
       if (selectedDetail?.ride.ride_uuid === ride.ride_uuid) {
         setSelectedDetail(null);
+        setTimeseries([]);
       }
-      await loadData();
-      setDeleteStatus("Ride deleted.");
+      await loadData(rangeDays);
+      setActionStatus("Ride deleted.");
     } catch (err) {
-      setDeleteStatus(err instanceof Error ? err.message : "Failed to delete ride");
+      setActionStatus(err instanceof Error ? err.message : "Failed to delete ride");
     } finally {
       setDeletingRideUuid(null);
     }
@@ -122,15 +172,39 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-bold text-white">Fitness & Ride Analytics</h1>
-        <label className="cursor-pointer rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2 text-xs font-semibold text-zinc-200 hover:bg-zinc-800">
-          Upload Outdoor .FIT
-          <input
-            type="file"
-            accept=".fit"
-            className="hidden"
-            onChange={(e) => void handleFitUpload(e)}
-          />
-        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          <div
+            role="group"
+            aria-label="Analytics range"
+            className="inline-flex rounded-xl border border-zinc-700 bg-zinc-900 p-0.5 text-xs"
+          >
+            {([42, 90] as const).map((days) => (
+              <button
+                key={days}
+                type="button"
+                onClick={() => setRangeDays(days)}
+                aria-pressed={rangeDays === days}
+                className={`rounded-lg px-3 py-1.5 font-semibold transition ${
+                  rangeDays === days
+                    ? "bg-orange-500 text-zinc-950"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                {days}d
+              </button>
+            ))}
+          </div>
+
+          <label className="cursor-pointer rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2 text-xs font-semibold text-zinc-200 hover:bg-zinc-800">
+            Upload Outdoor .FIT
+            <input
+              type="file"
+              accept=".fit"
+              className="hidden"
+              onChange={(e) => void handleFitUpload(e)}
+            />
+          </label>
+        </div>
       </div>
 
       {uploadStatus && (
@@ -139,9 +213,9 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
         </div>
       )}
 
-      {deleteStatus && (
+      {actionStatus && (
         <div className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-zinc-300">
-          {deleteStatus}
+          {actionStatus}
         </div>
       )}
 
@@ -177,108 +251,167 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
         </div>
       )}
 
-      {/* 42-Day Peak Power Curve */}
-      {overview && overview.mmp_42d.length > 0 && (
-        <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
-            42-Day Mean Maximal Power (MMP)
-          </h2>
-          <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6 lg:grid-cols-11">
-            {overview.mmp_42d.map((p) => (
-              <div key={p.duration_s} className="rounded-lg bg-zinc-950 p-2.5 text-center">
-                <div className="text-xs text-zinc-500">
-                  {p.duration_s < 60 ? `${p.duration_s}s` : `${p.duration_s / 60}m`}
-                </div>
-                <div className="text-base font-bold text-white">{p.watts}W</div>
-                {p.w_per_kg !== null && (
-                  <div className="text-[11px] text-zinc-400">{p.w_per_kg} W/kg</div>
-                )}
-              </div>
-            ))}
+      {/* Visual PMC + Power Curve + Weekly Load Charts */}
+      {overview && (
+        <div className="space-y-4">
+          <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-400">
+              Performance Management Chart ({rangeDays} Days)
+            </h2>
+            <PmcChart data={overview.daily_pmc} />
+          </section>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-400">
+                Mean Maximal Power Curve (42d vs 90d)
+              </h2>
+              <MmpCurveChart mmp42={overview.mmp_42d} mmp90={overview.mmp_90d} />
+            </section>
+
+            <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-400">
+                Weekly Training Load (TSS &amp; Hours)
+              </h2>
+              <WeeklyLoadChart weeks={overview.weekly_rollups} />
+            </section>
           </div>
-        </section>
+        </div>
       )}
 
-      {/* Recent Rides + Detail Compliance */}
+      {/* Recent Rides + Detail Inspection */}
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="space-y-2">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
             Recent Rides
           </h2>
-          {rides.map((r) => (
-            <div
-              key={r.ride_uuid}
-              className="flex items-stretch gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-2"
-            >
-              <button
-                type="button"
-                onClick={() => void api.getRideDetail(r.ride_uuid).then(setSelectedDetail)}
-                className="min-w-0 flex-1 rounded-lg p-1.5 text-left hover:bg-zinc-800"
+          {rides.map((r) => {
+            const isSelected = selectedDetail?.ride.ride_uuid === r.ride_uuid;
+            return (
+              <div
+                key={r.ride_uuid}
+                className={`flex items-stretch gap-2 rounded-xl border bg-zinc-900 p-2 ${
+                  isSelected ? "border-orange-500/70" : "border-zinc-800"
+                }`}
               >
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-white">{r.name}</span>
-                  <span className="text-xs font-mono text-zinc-400">{r.ride_day}</span>
-                </div>
-                <div className="mt-1 text-xs text-zinc-400">
-                  {Math.round(r.duration_s / 60)}m · NP {r.np_watts ?? "--"}W · IF{" "}
-                  {r.intensity_factor ?? "--"} · TSS {r.tss} · Pw:HR{" "}
-                  {r.pw_hr_decoupling !== null ? `${r.pw_hr_decoupling}%` : "--"}
-                </div>
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleDeleteRide(r)}
-                disabled={deletingRideUuid === r.ride_uuid}
-                className="self-center rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-300 hover:border-rose-400 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {deletingRideUuid === r.ride_uuid ? "Deleting..." : "Delete"}
-              </button>
-            </div>
-          ))}
+                <button
+                  type="button"
+                  onClick={() => void handleSelectRide(r.ride_uuid)}
+                  className="min-w-0 flex-1 rounded-lg p-1.5 text-left hover:bg-zinc-800"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-semibold text-white">{r.name}</span>
+                    <span className="shrink-0 text-xs font-mono text-zinc-400">{r.ride_day}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-zinc-400">
+                    {Math.round(r.duration_s / 60)}m · NP {r.np_watts ?? "--"}W · IF{" "}
+                    {r.intensity_factor ?? "--"} · TSS {Math.round(r.tss)} · Pw:HR{" "}
+                    {r.pw_hr_decoupling !== null ? `${r.pw_hr_decoupling}%` : "--"}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteRide(r)}
+                  disabled={deletingRideUuid === r.ride_uuid}
+                  className="self-center rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-300 hover:border-rose-400 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {deletingRideUuid === r.ride_uuid ? "Deleting..." : "Delete"}
+                </button>
+              </div>
+            );
+          })}
         </section>
 
         <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
-            Interval Execution Detail
+            Ride &amp; Interval Detail
           </h2>
           {!selectedDetail ? (
             <p className="mt-3 text-sm text-zinc-500">
-              Select a ride to inspect per-interval compliance, HR drift, and Strava sync status.
+              Select a ride to inspect its Power/HR chart, per-interval compliance, summary PNG card,
+              and Strava sync status.
             </p>
           ) : (
-            <div className="mt-3 space-y-3">
-              <div className="text-sm text-zinc-300">
-                <strong>{selectedDetail.ride.name}</strong> · RPE{" "}
-                {selectedDetail.ride.rpe ?? "--"} · Compliance{" "}
-                {selectedDetail.ride.compliance_pct ?? "--"}% · Strava:{" "}
-                {selectedDetail.ride.strava_upload_status}
+            <div className="mt-3 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="text-sm text-zinc-300">
+                  <strong>{selectedDetail.ride.name}</strong> · RPE{" "}
+                  {selectedDetail.ride.rpe ?? "--"} · Compliance{" "}
+                  {selectedDetail.ride.compliance_pct ?? "--"}% · Strava:{" "}
+                  <span className="font-mono text-xs">{selectedDetail.ride.strava_upload_status}</span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ok = downloadRideSummaryPng(selectedDetail.ride, timeseries);
+                      setActionStatus(
+                        ok
+                          ? "Downloaded workout summary PNG."
+                          : "Canvas export is unavailable in this browser."
+                      );
+                    }}
+                    className="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-700"
+                  >
+                    Download Summary PNG
+                  </button>
+                  <a
+                    href={`/api/rides/${encodeURIComponent(selectedDetail.ride.ride_uuid)}/fit`}
+                    className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800"
+                  >
+                    .FIT
+                  </a>
+                  {(selectedDetail.ride.strava_upload_status === "failed" ||
+                    selectedDetail.ride.strava_upload_status === "pending") && (
+                    <button
+                      type="button"
+                      onClick={() => void handleRetryStrava(selectedDetail.ride.ride_uuid)}
+                      disabled={retryingStravaUuid === selectedDetail.ride.ride_uuid}
+                      className="rounded-lg bg-orange-500 px-2.5 py-1.5 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:opacity-50"
+                    >
+                      {retryingStravaUuid === selectedDetail.ride.ride_uuid
+                        ? "Uploading..."
+                        : "Retry Strava"}
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="border-b border-zinc-800 text-zinc-400">
-                    <tr>
-                      <th className="py-1.5">Step</th>
-                      <th>Target</th>
-                      <th>Actual</th>
-                      <th>%</th>
-                      <th>HR</th>
-                      <th>Drift</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedDetail.intervals.map((iv) => (
-                      <tr key={iv.step_index} className="border-b border-zinc-800/50 text-zinc-200">
-                        <td className="py-1.5">{iv.label}</td>
-                        <td>{iv.target_watts ?? "--"}W</td>
-                        <td>{iv.actual_avg_watts ?? "--"}W</td>
-                        <td>{iv.pct_of_target ?? "--"}%</td>
-                        <td>{iv.avg_hr ?? "--"}</td>
-                        <td>{iv.hr_drift_bpm !== null ? `${iv.hr_drift_bpm} bpm` : "--"}</td>
+
+              {loadingTimeseries ? (
+                <div className="h-36 animate-pulse rounded-xl bg-zinc-950/70" />
+              ) : (
+                <RideTimeseriesChart points={timeseries} />
+              )}
+
+              {selectedDetail.intervals.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b border-zinc-800 text-zinc-400">
+                      <tr>
+                        <th className="py-1.5">Step</th>
+                        <th>Target</th>
+                        <th>Actual</th>
+                        <th>%</th>
+                        <th>HR</th>
+                        <th>Drift</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {selectedDetail.intervals.map((iv) => (
+                        <tr key={iv.step_index} className="border-b border-zinc-800/50 text-zinc-200">
+                          <td className="py-1.5">{iv.label}</td>
+                          <td>{iv.target_watts ?? "--"}W</td>
+                          <td>{iv.actual_avg_watts ?? "--"}W</td>
+                          <td>{iv.pct_of_target ?? "--"}%</td>
+                          <td>{iv.avg_hr ?? "--"}</td>
+                          <td>{iv.hr_drift_bpm !== null ? `${iv.hr_drift_bpm} bpm` : "--"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
         </section>

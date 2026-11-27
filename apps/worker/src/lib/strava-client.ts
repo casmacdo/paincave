@@ -212,21 +212,106 @@ async function markStravaStatus(
     .run();
 }
 
+export interface StravaRideSummaryMeta {
+  ride_uuid: string;
+  name: string;
+  notes: string;
+  r2_fit_key: string;
+  duration_s: number;
+  work_kj: number;
+  avg_power: number | null;
+  np_watts: number | null;
+  intensity_factor: number | null;
+  tss: number;
+  avg_hr: number | null;
+  compliance_pct: number | null;
+  rpe: number | null;
+  feel: number | null;
+}
+
+export interface StravaWorkIntervalMeta {
+  label: string;
+  actual_duration_s: number;
+  actual_avg_watts: number | null;
+}
+
+export function formatStravaRideDescription(
+  ride: Omit<StravaRideSummaryMeta, "ride_uuid" | "name" | "r2_fit_key">,
+  workIntervals: readonly StravaWorkIntervalMeta[] = []
+): string {
+  const lines: string[] = [];
+  const trimmedNotes = ride.notes.trim();
+  if (trimmedNotes) {
+    lines.push(trimmedNotes);
+  }
+
+  const metrics: string[] = [];
+  if (ride.np_watts !== null) metrics.push(`NP ${ride.np_watts}W`);
+  else if (ride.avg_power !== null) metrics.push(`Avg ${ride.avg_power}W`);
+  if (ride.intensity_factor !== null) metrics.push(`IF ${ride.intensity_factor.toFixed(2)}`);
+  if (ride.tss > 0) metrics.push(`TSS ${Math.round(ride.tss)}`);
+  if (ride.work_kj > 0) metrics.push(`${Math.round(ride.work_kj)} kJ`);
+  if (ride.avg_hr !== null) metrics.push(`Avg HR ${ride.avg_hr} bpm`);
+  if (ride.compliance_pct !== null) metrics.push(`Compliance ${Math.round(ride.compliance_pct)}%`);
+
+  const summaryLines: string[] = [];
+  if (metrics.length > 0) {
+    summaryLines.push(metrics.join(" · "));
+  }
+  if (workIntervals.length > 0) {
+    const withWatts = workIntervals.filter((iv) => iv.actual_avg_watts !== null);
+    const avgWorkW =
+      withWatts.length > 0
+        ? Math.round(
+            withWatts.reduce((sum, iv) => sum + (iv.actual_avg_watts ?? 0), 0) / withWatts.length
+          )
+        : null;
+    const totalWorkMin = Math.round(
+      workIntervals.reduce((sum, iv) => sum + iv.actual_duration_s, 0) / 60
+    );
+    const intervalSummary = avgWorkW
+      ? `Work intervals: ${workIntervals.length} (${totalWorkMin}m @ ${avgWorkW}W avg)`
+      : `Work intervals: ${workIntervals.length} (${totalWorkMin}m)`;
+    summaryLines.push(intervalSummary);
+  }
+
+  const subjective: string[] = [];
+  if (ride.rpe !== null) subjective.push(`RPE ${ride.rpe}/10`);
+  if (ride.feel !== null) subjective.push(`Feel ${ride.feel}/5`);
+  if (subjective.length > 0) {
+    summaryLines.push(subjective.join(" · "));
+  }
+
+  if (summaryLines.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push(...summaryLines);
+  }
+
+  return lines.join("\n").slice(0, 1500);
+}
+
 export async function uploadFitToStrava(
   env: AppEnv,
   rideUuid: string
 ): Promise<{ status: string; upload_id: string | null; error: string | null }> {
   try {
-    const ride = await env.DB.prepare(
-      "SELECT ride_uuid, name, notes, r2_fit_key FROM rides WHERE ride_uuid = ?"
-    )
-      .bind(rideUuid)
-      .first<{
-        ride_uuid: string;
-        name: string;
-        notes: string;
-        r2_fit_key: string;
-      }>();
+    const [ride, intervalsRes] = await Promise.all([
+      env.DB.prepare(
+        `SELECT ride_uuid, name, notes, r2_fit_key, duration_s, work_kj, avg_power, np_watts,
+                intensity_factor, tss, avg_hr, compliance_pct, rpe, feel
+         FROM rides WHERE ride_uuid = ?`
+      )
+        .bind(rideUuid)
+        .first<StravaRideSummaryMeta>(),
+      env.DB.prepare(
+        `SELECT label, actual_duration_s, actual_avg_watts
+         FROM ride_intervals
+         WHERE ride_uuid = ? AND is_work_interval = 1 AND status != 'skipped'
+         ORDER BY step_index ASC`
+      )
+        .bind(rideUuid)
+        .all<StravaWorkIntervalMeta>(),
+    ]);
 
     if (!ride) {
       return { status: "failed", upload_id: null, error: "Ride not found" };
@@ -246,12 +331,13 @@ export async function uploadFitToStrava(
     }
 
     const fitBuffer = await fitObj.arrayBuffer();
+    const description = formatStravaRideDescription(ride, intervalsRes.results);
     const form = new FormData();
     form.set("file", new Blob([fitBuffer], { type: "application/octet-stream" }), `${rideUuid}.fit`);
     form.set("data_type", "fit");
     form.set("name", ride.name);
-    if (ride.notes) {
-      form.set("description", ride.notes);
+    if (description) {
+      form.set("description", description);
     }
     form.set("external_id", rideUuid);
 

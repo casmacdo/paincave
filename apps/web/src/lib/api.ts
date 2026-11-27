@@ -217,7 +217,28 @@ export const api = {
         status: string;
       }[];
       peaks: { duration_s: number; watts: number; w_per_kg: number | null }[];
-    }>(`/api/rides/${uuid}`),
+    }>(`/api/rides/${encodeURIComponent(uuid)}`),
+  getRideTimeseries: (uuid: string, bucketSeconds = 15) =>
+    requestJson<{
+      ride_uuid: string;
+      name: string;
+      bucket_seconds: number;
+      raw_samples: number;
+      points: {
+        t_s: number;
+        watts: number | null;
+        hr_bpm: number | null;
+        cadence_rpm: number | null;
+        speed_kph: number | null;
+      }[];
+    }>(`/api/rides/${encodeURIComponent(uuid)}/timeseries?bucket_seconds=${bucketSeconds}`),
+  retryStravaUpload: (uuid: string) =>
+    requestJson<{
+      ride_uuid: string;
+      status: string;
+      upload_id: string | null;
+      error: string | null;
+    }>(`/api/strava/retry/${encodeURIComponent(uuid)}`, { method: "POST" }),
   patchRide: (uuid: string, payload: { rpe?: number | null; feel?: number | null; notes?: string }) =>
     requestJson<{ ride: RideRecord }>(`/api/rides/${uuid}`, {
       method: "PATCH",
