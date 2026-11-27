@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub use crate::route::{RoutePayload, RoutePoint};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkoutStepMode {
@@ -78,6 +80,19 @@ pub enum BridgeCommand {
         #[serde(default)]
         weight_kg: Option<f64>,
         steps: Vec<FlattenedStep>,
+        #[serde(default)]
+        route: Option<RoutePayload>,
+    },
+    LoadRoute {
+        name: String,
+        ftp_watts: u16,
+        #[serde(default)]
+        lthr_bpm: Option<u16>,
+        #[serde(default)]
+        hrmax_bpm: Option<u16>,
+        #[serde(default)]
+        weight_kg: Option<f64>,
+        route: RoutePayload,
     },
     Start,
     Pause,

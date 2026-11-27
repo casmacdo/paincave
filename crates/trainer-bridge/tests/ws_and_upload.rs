@@ -133,6 +133,7 @@ async fn websocket_workout_control_and_upload_retry_recovery() -> anyhow::Result
             text_cue: None,
             is_work_interval: true,
         }],
+        route: None,
     };
     ws.send(Message::Text(serde_json::to_string(&load)?.into()))
         .await?;

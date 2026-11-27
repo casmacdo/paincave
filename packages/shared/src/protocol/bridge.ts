@@ -17,6 +17,20 @@ export const WorkoutExecutionStateSchema = z.enum([
   "completed",
 ]);
 
+export const RoutePointSchema = z.object({
+  lat_deg: z.number().min(-90).max(90),
+  lon_deg: z.number().min(-180).max(180),
+  elevation_m: z.number().min(-500).max(9000),
+});
+
+export const RoutePayloadSchema = z.object({
+  name: z.string().min(1).max(160),
+  points: z.array(RoutePointSchema).min(2).max(2000),
+  loop_route: z.boolean().default(true),
+  sim_mode: z.boolean().default(false),
+  trainer_difficulty_pct: z.number().int().min(10).max(100).default(100),
+});
+
 export const BridgeCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("scan_sensors") }),
   z.object({
@@ -29,6 +43,16 @@ export const BridgeCommandSchema = z.discriminatedUnion("type", [
     hrmax_bpm: z.number().int().min(120).max(240).nullable().optional(),
     weight_kg: z.number().min(35).max(200).nullable().optional(),
     steps: z.array(FlattenedStepSchema).min(1),
+    route: RoutePayloadSchema.nullable().optional(),
+  }),
+  z.object({
+    type: z.literal("load_route"),
+    name: z.string().min(1).max(160),
+    ftp_watts: z.number().int().min(50).max(600),
+    lthr_bpm: z.number().int().min(100).max(230).nullable().optional(),
+    hrmax_bpm: z.number().int().min(120).max(240).nullable().optional(),
+    weight_kg: z.number().min(35).max(200).nullable().optional(),
+    route: RoutePayloadSchema,
   }),
   z.object({ type: z.literal("start") }),
   z.object({ type: z.literal("pause") }),
@@ -215,6 +239,8 @@ export const RideUploadSummarySchema = z.object({
   peaks: z.array(MmpPointSchema).default([]),
 });
 
+export type RoutePoint = z.infer<typeof RoutePointSchema>;
+export type RoutePayload = z.infer<typeof RoutePayloadSchema>;
 export type BridgeCommand = z.infer<typeof BridgeCommandSchema>;
 export type BridgeEvent = z.infer<typeof BridgeEventSchema>;
 export type RideUploadSummary = z.infer<typeof RideUploadSummarySchema>;

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import type { BridgeCommand } from "@paincave/shared";
+import type { BridgeCommand, RoutePayload } from "@paincave/shared";
 import { api, type AthleteThreshold } from "./lib/api.js";
 import {
   BridgeClient,
@@ -10,12 +10,13 @@ import { VersionAutoReloader } from "./lib/auto-update.js";
 import { RidePage } from "./pages/RidePage.js";
 import { CalendarPage } from "./pages/CalendarPage.js";
 import { WorkoutsPage } from "./pages/WorkoutsPage.js";
+import { RoutesPage } from "./pages/RoutesPage.js";
 import { AnalyticsPage } from "./pages/AnalyticsPage.js";
 import { SettingsPage } from "./pages/SettingsPage.js";
 
 export const APP_NAME = "PainCave";
 
-type TabKey = "ride" | "calendar" | "workouts" | "analytics" | "settings";
+type TabKey = "ride" | "calendar" | "workouts" | "routes" | "analytics" | "settings";
 
 export function App() {
   const [tab, setTab] = useState<TabKey>("ride");
@@ -90,18 +91,37 @@ export function App() {
     }
   };
 
-  const handleLoadWorkoutOnTrainer = async (workoutId: string, plannedSessionId?: string) => {
+  const handleLoadWorkoutOnTrainer = async (
+    workoutId: string,
+    plannedSessionId?: string,
+    route?: RoutePayload
+  ) => {
     const flattened = await api.getFlattenedWorkout(workoutId);
     const cmd: BridgeCommand = {
       type: "load_workout",
       workout_id: flattened.workout_id,
       planned_session_id: plannedSessionId ?? null,
-      name: flattened.name,
+      name: route ? `${flattened.name} · ${route.name}` : flattened.name,
       ftp_watts: flattened.ftp_watts,
       lthr_bpm: flattened.lthr_bpm,
       hrmax_bpm: flattened.hrmax_bpm,
       weight_kg: flattened.weight_kg,
       steps: flattened.steps,
+      route: route ?? null,
+    };
+    bridgeClient.send(cmd);
+    setTab("ride");
+  };
+
+  const handleLoadRouteOnTrainer = (route: RoutePayload) => {
+    const cmd: BridgeCommand = {
+      type: "load_route",
+      name: route.sim_mode ? `${route.name} (SIM)` : route.name,
+      ftp_watts: thresholds?.ftp_watts ?? 250,
+      lthr_bpm: thresholds?.lthr_bpm ?? null,
+      hrmax_bpm: thresholds?.hrmax_bpm ?? null,
+      weight_kg: thresholds?.weight_kg ?? null,
+      route,
     };
     bridgeClient.send(cmd);
     setTab("ride");
@@ -169,6 +189,7 @@ export function App() {
                   ["ride", "Ride"],
                   ["calendar", "Calendar"],
                   ["workouts", "Workouts"],
+                  ["routes", "Routes"],
                   ["analytics", "Analytics"],
                   ["settings", "Settings"],
                 ] as const
@@ -220,6 +241,14 @@ export function App() {
         {tab === "calendar" && <CalendarPage onLoadWorkout={handleLoadWorkoutOnTrainer} />}
         {tab === "workouts" && (
           <WorkoutsPage ftpWatts={ftpWatts} onLoadWorkout={handleLoadWorkoutOnTrainer} />
+        )}
+        {tab === "routes" && (
+          <RoutesPage
+            onLoadRoute={handleLoadRouteOnTrainer}
+            onLoadWorkoutWithRoute={(workoutId, route) =>
+              handleLoadWorkoutOnTrainer(workoutId, undefined, route)
+            }
+          />
         )}
         {tab === "analytics" && <AnalyticsPage thresholds={thresholds} />}
         {tab === "settings" && (

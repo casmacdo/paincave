@@ -66,6 +66,9 @@ pub struct WorkoutEngine {
     samples: Vec<TelemetrySample>,
     watts_window_3s: VecDeque<u16>,
     synthetic_route_enabled: bool,
+    session_route_active: bool,
+    route_sim_mode: bool,
+    route_trainer_difficulty_pct: u8,
     synthetic_route: SyntheticRoute,
     last_route_position: Option<SyntheticRoutePosition>,
 }
@@ -101,9 +104,24 @@ impl WorkoutEngine {
             samples: Vec::new(),
             watts_window_3s: VecDeque::with_capacity(3),
             synthetic_route_enabled: false,
+            session_route_active: false,
+            route_sim_mode: false,
+            route_trainer_difficulty_pct: 100,
             synthetic_route: SyntheticRoute::default(),
             last_route_position: None,
         }
+    }
+
+    fn route_active(&self) -> bool {
+        self.session_route_active || self.synthetic_route_enabled
+    }
+
+    fn clear_session_route(&mut self) {
+        self.session_route_active = false;
+        self.route_sim_mode = false;
+        self.route_trainer_difficulty_pct = 100;
+        self.synthetic_route = SyntheticRoute::default();
+        self.last_route_position = None;
     }
 
     pub fn with_synthetic_route(mut self, enabled: bool) -> Self {
@@ -277,6 +295,7 @@ impl WorkoutEngine {
                 hrmax_bpm,
                 weight_kg,
                 steps,
+                route,
             } => {
                 if matches!(
                     self.state,
@@ -291,7 +310,34 @@ impl WorkoutEngine {
                     });
                     return events;
                 }
+                let parsed_route = if let Some(payload) = route {
+                    match SyntheticRoute::from_points(payload.points, payload.loop_route) {
+                        Ok(built) => Some((
+                            built,
+                            payload.sim_mode,
+                            payload.trainer_difficulty_pct.clamp(10, 100),
+                        )),
+                        Err(err) => {
+                            events.push(BridgeEvent::Error {
+                                code: "INVALID_ROUTE".to_string(),
+                                message: err.to_string(),
+                            });
+                            return events;
+                        }
+                    }
+                } else {
+                    None
+                };
+
                 self.reset_session();
+                if let Some((built, sim_mode, difficulty)) = parsed_route {
+                    self.synthetic_route = built;
+                    self.session_route_active = true;
+                    self.route_sim_mode = sim_mode;
+                    self.route_trainer_difficulty_pct = difficulty;
+                } else {
+                    self.clear_session_route();
+                }
                 self.meta = ActiveWorkoutMeta {
                     workout_id,
                     planned_session_id,
@@ -302,6 +348,89 @@ impl WorkoutEngine {
                     weight_kg,
                 };
                 self.steps = steps;
+                self.state = WorkoutExecutionState::Armed;
+            }
+            BridgeCommand::LoadRoute {
+                name,
+                ftp_watts,
+                lthr_bpm,
+                hrmax_bpm,
+                weight_kg,
+                route,
+            } => {
+                if matches!(
+                    self.state,
+                    WorkoutExecutionState::Running
+                        | WorkoutExecutionState::Paused
+                        | WorkoutExecutionState::AutoPaused
+                ) {
+                    events.push(BridgeEvent::Error {
+                        code: "WORKOUT_ACTIVE".to_string(),
+                        message: "Stop or discard the current ride before loading a route"
+                            .to_string(),
+                    });
+                    return events;
+                }
+                let built = match SyntheticRoute::from_points(route.points, route.loop_route) {
+                    Ok(built) => built,
+                    Err(err) => {
+                        events.push(BridgeEvent::Error {
+                            code: "INVALID_ROUTE".to_string(),
+                            message: err.to_string(),
+                        });
+                        return events;
+                    }
+                };
+                self.reset_session();
+                self.synthetic_route = built;
+                self.session_route_active = true;
+                self.route_sim_mode = route.sim_mode;
+                self.route_trainer_difficulty_pct = route.trainer_difficulty_pct.clamp(10, 100);
+                self.meta = ActiveWorkoutMeta {
+                    workout_id: None,
+                    planned_session_id: None,
+                    name,
+                    ftp_watts,
+                    lthr_bpm,
+                    hrmax_bpm,
+                    weight_kg,
+                };
+                let step = if route.sim_mode {
+                    FlattenedStep {
+                        step_index: 0,
+                        label: format!("SIM: {}", route.name),
+                        start_offset_s: 0,
+                        duration_s: 14_400,
+                        mode: WorkoutStepMode::Slope,
+                        watts_start: None,
+                        watts_end: None,
+                        grade_pct: Some(0.0),
+                        resistance_pct: None,
+                        cadence_rpm: None,
+                        text_cue: Some(format!(
+                            "SIM Mode ({}% difficulty)",
+                            self.route_trainer_difficulty_pct
+                        )),
+                        is_work_interval: false,
+                    }
+                } else {
+                    let endurance_w = ((u32::from(ftp_watts) * 65) / 100) as u16;
+                    FlattenedStep {
+                        step_index: 0,
+                        label: format!("Route: {}", route.name),
+                        start_offset_s: 0,
+                        duration_s: 14_400,
+                        mode: WorkoutStepMode::Erg,
+                        watts_start: Some(endurance_w),
+                        watts_end: Some(endurance_w),
+                        grade_pct: None,
+                        resistance_pct: None,
+                        cadence_rpm: None,
+                        text_cue: None,
+                        is_work_interval: false,
+                    }
+                };
+                self.steps = vec![step];
                 self.state = WorkoutExecutionState::Armed;
             }
             BridgeCommand::Start => {
@@ -487,6 +616,7 @@ impl WorkoutEngine {
                     }
                 }
                 self.reset_session();
+                self.clear_session_route();
                 self.steps.clear();
                 self.state = WorkoutExecutionState::Idle;
             }
@@ -495,6 +625,7 @@ impl WorkoutEngine {
                     let _ = self.store.discard_ride(uuid);
                 }
                 self.reset_session();
+                self.clear_session_route();
                 self.steps.clear();
                 self.state = WorkoutExecutionState::Idle;
             }
@@ -534,7 +665,23 @@ impl WorkoutEngine {
             Some((sum as f64 / self.watts_window_3s.len() as f64).round() as u16)
         };
 
-        let (mut mode, mut target_watts, target_grade, target_res) = self.compute_desired_target();
+        let (mut mode, mut target_watts, mut target_grade, mut target_res) =
+            self.compute_desired_target();
+        let route_active = self.route_active();
+
+        if route_active && self.route_sim_mode && self.manual_mode_override.is_none() {
+            let current_grade = self
+                .synthetic_route
+                .position_at(self.synthetic_route.distance_m())
+                .grade_pct;
+            let scaled = (current_grade * f64::from(self.route_trainer_difficulty_pct) / 100.0)
+                .clamp(-10.0, 20.0);
+            let quantized = (scaled * 10.0).round() / 10.0;
+            mode = WorkoutStepMode::Slope;
+            target_watts = None;
+            target_grade = Some(quantized);
+            target_res = None;
+        }
 
         if matches!(
             self.state,
@@ -570,8 +717,11 @@ impl WorkoutEngine {
                 .await;
 
             if self.state == WorkoutExecutionState::Running {
-                let sample = if self.synthetic_route_enabled {
-                    let position = self.synthetic_route.advance_one_second(raw.watts);
+                let sample = if route_active {
+                    let rider_weight_kg = self.meta.weight_kg.unwrap_or(75.0);
+                    let position = self
+                        .synthetic_route
+                        .advance_one_second_with_weight(raw.watts, rider_weight_kg);
                     self.last_route_position = Some(position);
                     route_position = Some(position);
                     TelemetrySample {
@@ -641,7 +791,7 @@ impl WorkoutEngine {
             cur_step.map_or(0, |s| s.duration_s.saturating_sub(self.step_elapsed_s));
         let pending_uploads = self.store.pending_upload_count().unwrap_or(0);
 
-        let telemetry_route = if self.synthetic_route_enabled {
+        let telemetry_route = if route_active {
             route_position.or(self.last_route_position)
         } else {
             None
@@ -740,6 +890,7 @@ mod tests {
                 hrmax_bpm: Some(190),
                 weight_kg: Some(72.0),
                 steps: sample_steps(),
+                route: None,
             })
             .await;
         assert!(load_events.is_empty());
@@ -829,6 +980,7 @@ mod tests {
                 hrmax_bpm: Some(190),
                 weight_kg: Some(72.0),
                 steps: sample_steps(),
+                route: None,
             })
             .await;
         engine.handle_command(BridgeCommand::Start).await;
@@ -872,6 +1024,86 @@ mod tests {
             assert_eq!(distance_m, Some(last_distance));
         } else {
             anyhow::bail!("expected paused telemetry event");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn load_route_sim_mode_dispatches_difficulty_scaled_grade_and_records_gps()
+    -> anyhow::Result<()> {
+        use crate::protocol::{RoutePayload, RoutePoint};
+
+        let transport = Arc::new(MockTransport::new());
+        let store = SqliteStore::open_in_memory()?;
+        let notify = Arc::new(Notify::new());
+        // Synthetic route disabled globally — explicitly loading a route activates it per-session
+        let mut engine = WorkoutEngine::new(transport.clone(), store, notify);
+
+        // ~111m horizontal segment rising 8.89m -> ~8.0% climb
+        let climb_points = vec![
+            RoutePoint {
+                lat_deg: 45.0,
+                lon_deg: 6.0,
+                elevation_m: 1000.0,
+            },
+            RoutePoint {
+                lat_deg: 45.001,
+                lon_deg: 6.0,
+                elevation_m: 1008.89,
+            },
+            RoutePoint {
+                lat_deg: 45.002,
+                lon_deg: 6.0,
+                elevation_m: 1017.78,
+            },
+        ];
+
+        let load_events = engine
+            .handle_command(BridgeCommand::LoadRoute {
+                name: "Alpine Climb".to_string(),
+                ftp_watts: 260,
+                lthr_bpm: Some(172),
+                hrmax_bpm: Some(190),
+                weight_kg: Some(72.0),
+                route: RoutePayload {
+                    name: "Alpine Climb".to_string(),
+                    points: climb_points,
+                    loop_route: false,
+                    sim_mode: true,
+                    trainer_difficulty_pct: 50,
+                },
+            })
+            .await;
+        assert!(load_events.is_empty());
+        assert_eq!(engine.state(), WorkoutExecutionState::Armed);
+
+        engine.handle_command(BridgeCommand::Start).await;
+        let ev = engine.tick_one_second().await;
+
+        let (sent_mode, sent_grade) = transport.last_slope_grade_pct().await;
+        assert_eq!(sent_mode, WorkoutStepMode::Slope);
+        // 8% climb * 50% trainer difficulty = ~4.0% sent to trainer
+        assert!(
+            (sent_grade - 4.0).abs() <= 0.2,
+            "sent_grade was {sent_grade}"
+        );
+
+        if let BridgeEvent::Telemetry {
+            mode,
+            synthetic_route,
+            target_grade_pct,
+            grade_pct,
+            elevation_m,
+            ..
+        } = ev
+        {
+            assert_eq!(mode, WorkoutStepMode::Slope);
+            assert!(synthetic_route);
+            assert!((target_grade_pct.unwrap_or(0.0) - 4.0).abs() <= 0.2);
+            assert!((grade_pct.unwrap_or(0.0) - 8.0).abs() <= 0.3);
+            assert!(elevation_m.unwrap_or(0.0) > 1000.0);
+        } else {
+            anyhow::bail!("expected SIM mode telemetry");
         }
         Ok(())
     }
