@@ -209,6 +209,14 @@ const MESSAGES = {
   },
   "auth.continue_google": { "fr-CA": "Continuer avec Google", en: "Continue with Google" },
   "auth.please_wait": { "fr-CA": "Un instant...", en: "Please wait..." },
+
+  // Live Ride HUD
+  "ride.fullscreen": { "fr-CA": "Plein écran", en: "Fullscreen" },
+  "ride.exit_fullscreen": { "fr-CA": "Quitter plein écran", en: "Exit Fullscreen" },
+  "ride.shortcuts_hint": {
+    "fr-CA": "Raccourcis : Espace Pause/Reprendre · ↑/↓ Biais/Pente · → Passer · M Muet · F/Échap Plein écran",
+    en: "Shortcuts: Space Pause/Resume · ↑/↓ Bias/Grade · → Skip · M Mute · F/Esc Fullscreen",
+  },
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES;

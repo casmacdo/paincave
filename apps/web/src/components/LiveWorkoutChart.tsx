@@ -271,6 +271,7 @@ export function LiveWorkoutChart({
 
     let cancelled = false;
     let onResize: (() => void) | null = null;
+    let resizeObserver: ResizeObserver | null = null;
     const axisStroke = "#5c5449";
     const gridStroke = "#dfd8ca";
     const powerStroke = "#2d6a4f";
@@ -329,6 +330,12 @@ export function LiveWorkoutChart({
           }
         };
         window.addEventListener("resize", onResize);
+        if (typeof ResizeObserver !== "undefined" && containerRef.current) {
+          resizeObserver = new ResizeObserver(() => {
+            onResize?.();
+          });
+          resizeObserver.observe(containerRef.current);
+        }
       })
       .catch((err: unknown) => {
         console.error("Failed to initialize uPlot chart", err);
@@ -336,6 +343,10 @@ export function LiveWorkoutChart({
 
     return () => {
       cancelled = true;
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+        resizeObserver = null;
+      }
       if (onResize) {
         window.removeEventListener("resize", onResize);
       }

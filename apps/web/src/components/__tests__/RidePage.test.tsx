@@ -10,8 +10,16 @@ function makeSnapshot(overrides?: {
   mode?: "erg" | "slope" | "resistance";
   target_grade_pct?: number | null;
   text_cue?: string | null;
+  cadence_rpm?: number | null;
+  target_cadence_rpm?: number | null;
+  step_cadence_rpm?: number | null;
+  state?: "idle" | "armed" | "running" | "paused" | "auto_paused" | "completed";
 }): BridgeClientSnapshot {
   const cue = overrides && "text_cue" in overrides ? overrides.text_cue ?? null : "Hold steady 90 RPM";
+  const stepCadence = overrides && "step_cadence_rpm" in overrides ? overrides.step_cadence_rpm ?? null : 90;
+  const targetCadence =
+    overrides && "target_cadence_rpm" in overrides ? overrides.target_cadence_rpm ?? null : stepCadence;
+  const cadenceRpm = overrides && "cadence_rpm" in overrides ? overrides.cadence_rpm ?? null : 91;
   return {
     connected: true,
     lastSaved: null,
@@ -29,7 +37,7 @@ function makeSnapshot(overrides?: {
         watts_end: 260,
         grade_pct: null,
         resistance_pct: null,
-        cadence_rpm: 90,
+        cadence_rpm: stepCadence,
         text_cue: "Hold steady 90 RPM",
         is_work_interval: true,
       },
@@ -53,7 +61,7 @@ function makeSnapshot(overrides?: {
       ts_ms: 1764180000000,
       ride_uuid: "550e8400-e29b-41d4-a716-446655440000",
       workout_name: "4x8m Threshold",
-      state: "running",
+      state: overrides?.state ?? "running",
       elapsed_s: 120,
       step_index: overrides?.step_index ?? 0,
       total_steps: 2,
@@ -63,10 +71,11 @@ function makeSnapshot(overrides?: {
       mode: overrides?.mode ?? "erg",
       target_watts: 260,
       target_grade_pct: overrides?.target_grade_pct ?? null,
+      target_cadence_rpm: targetCadence,
       erg_bias_pct: 100,
       watts: 258,
       watts_3s: 261,
-      cadence_rpm: 91,
+      cadence_rpm: cadenceRpm,
       hr_bpm: 165,
       speed_kph: 35.1,
       text_cue: cue,
@@ -172,5 +181,89 @@ describe("RidePage HUD & Controls", () => {
     );
 
     expect(screen.queryByText(/Cue:/)).toBeNull();
+  });
+
+  it("integrates cadence target badge, gauge, feedback states, and next-step cadence preview", () => {
+    const sendCommand = vi.fn().mockReturnValue(true);
+    const { rerender } = render(
+      <RidePage snapshot={makeSnapshot()} ftpWatts={260} sendCommand={sendCommand} />
+    );
+
+    expect(screen.getByTestId("cadence-target-badge").textContent).toBe("Target 90 rpm");
+    expect(screen.getByTestId("cadence-target-gauge")).toBeTruthy();
+    expect(screen.getByTestId("cadence-feedback").textContent).toBe("On target (85–95 rpm)");
+    expect(screen.getByTestId("next-step-preview").textContent).toContain("85 rpm");
+
+    rerender(
+      <RidePage
+        snapshot={makeSnapshot({ cadence_rpm: 78 })}
+        ftpWatts={260}
+        sendCommand={sendCommand}
+      />
+    );
+    expect(screen.getByTestId("cadence-feedback").textContent).toBe("Spin up (+12 rpm)");
+
+    rerender(
+      <RidePage
+        snapshot={makeSnapshot({ cadence_rpm: 102 })}
+        ftpWatts={260}
+        sendCommand={sendCommand}
+      />
+    );
+    expect(screen.getByTestId("cadence-feedback").textContent).toBe("Ease cadence (-12 rpm)");
+
+    rerender(
+      <RidePage
+        snapshot={makeSnapshot({ step_cadence_rpm: null, target_cadence_rpm: null })}
+        ftpWatts={260}
+        sendCommand={sendCommand}
+      />
+    );
+    expect(screen.queryByTestId("cadence-target-badge")).toBeNull();
+    expect(screen.queryByTestId("cadence-target-gauge")).toBeNull();
+  });
+
+  it("supports fullscreen workout mode with Fullscreen API fallback and keyboard shortcuts", () => {
+    const sendCommand = vi.fn().mockReturnValue(true);
+    const requestFullscreenMock = vi.fn().mockResolvedValue(undefined);
+    const exitFullscreenMock = vi.fn().mockResolvedValue(undefined);
+
+    render(<RidePage snapshot={makeSnapshot()} ftpWatts={260} sendCommand={sendCommand} />);
+
+    const root = screen.getByTestId("ride-hud-root");
+    Object.defineProperty(root, "requestFullscreen", {
+      configurable: true,
+      value: requestFullscreenMock,
+    });
+    Object.defineProperty(document, "exitFullscreen", {
+      configurable: true,
+      value: exitFullscreenMock,
+    });
+
+    const toggle = screen.getByTestId("fullscreen-toggle");
+    expect(toggle.textContent).toBe("Fullscreen");
+
+    fireEvent.click(toggle);
+    expect(requestFullscreenMock).toHaveBeenCalledTimes(1);
+    expect(root.className).toContain("fixed");
+    expect(root.className).toContain("inset-0");
+    expect(toggle.textContent).toBe("Exit Fullscreen");
+    expect(screen.getByTestId("fullscreen-shortcuts-hint")).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: " ", code: "Space" });
+    expect(sendCommand).toHaveBeenCalledWith({ type: "pause" });
+
+    fireEvent.keyDown(window, { key: "ArrowUp" });
+    expect(sendCommand).toHaveBeenCalledWith({ type: "set_erg_bias", bias_pct: 105 });
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(sendCommand).toHaveBeenCalledWith({ type: "skip_step" });
+
+    fireEvent.keyDown(window, { key: "m" });
+    expect(screen.getByText("Cues: Muted")).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(root.className).not.toContain("fixed");
+    expect(toggle.textContent).toBe("Fullscreen");
   });
 });
