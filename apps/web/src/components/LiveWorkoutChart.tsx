@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type uPlot from "uplot";
 import type { FlattenedStep } from "@paincave/shared";
+import { useTheme } from "../lib/theme.js";
 
 export interface LiveDataPoint {
   t_s: number;
@@ -21,18 +22,18 @@ function powerZone(
   ftpWatts: number
 ): { label: string; range: string; color: string } {
   const pct = (watts / Math.max(1, ftpWatts)) * 100;
-  if (pct < 55) return { label: "Z1", range: "<55% FTP", color: "#52525b" };
-  if (pct <= 75) return { label: "Z2", range: "55–75% FTP", color: "#3b82f6" };
-  if (pct <= 90) return { label: "Z3", range: "76–90% FTP", color: "#22c55e" };
-  if (pct <= 105) return { label: "Z4", range: "91–105% FTP", color: "#eab308" };
-  if (pct <= 120) return { label: "Z5", range: "106–120% FTP", color: "#f97316" };
-  if (pct <= 150) return { label: "Z6", range: "121–150% FTP", color: "#ef4444" };
-  return { label: "Z7", range: ">150% FTP", color: "#dc2626" };
+  if (pct < 55) return { label: "Z1", range: "<55% FTP", color: "#8c8273" };
+  if (pct <= 75) return { label: "Z2", range: "55–75% FTP", color: "#3b7a8c" };
+  if (pct <= 90) return { label: "Z3", range: "76–90% FTP", color: "#2e6f56" };
+  if (pct <= 105) return { label: "Z4", range: "91–105% FTP", color: "#b58322" };
+  if (pct <= 120) return { label: "Z5", range: "106–120% FTP", color: "#b8562b" };
+  if (pct <= 150) return { label: "Z6", range: "121–150% FTP", color: "#a63d3d" };
+  return { label: "Z7", range: ">150% FTP", color: "#7d2929" };
 }
 
 function stepColor(step: FlattenedStep, ftp: number): string {
   if (step.watts_start === null && step.watts_end === null) {
-    return "#6366f1"; // Non-ERG slope / resistance / free-ride accent
+    return "#664978"; // Non-ERG slope / resistance / free-ride muted plum
   }
   const w1 = step.watts_start ?? step.watts_end ?? ftp * 0.75;
   const w2 = step.watts_end ?? w1;
@@ -141,8 +142,8 @@ export function WorkoutProfileSvg({
               key={step.step_index}
               points={`${x1},${height} ${x1},${y1} ${x2},${y2} ${x2},${height}`}
               fill={fill}
-              fillOpacity={isActive ? 0.96 : 0.78}
-              stroke={isActive ? "#fafafa" : "#09090b"}
+              fillOpacity={isActive ? 0.96 : 0.8}
+              stroke={isActive ? "var(--pc-text)" : "var(--pc-chart-bg)"}
               strokeWidth={isActive ? 2 : 0.8}
               tabIndex={0}
               role="img"
@@ -166,7 +167,7 @@ export function WorkoutProfileSvg({
             y1={0}
             x2={Math.min(viewW, (elapsedS / totalS) * viewW)}
             y2={height}
-            stroke="#ffffff"
+            stroke="var(--pc-text)"
             strokeWidth={2}
             aria-hidden="true"
             pointerEvents="none"
@@ -260,6 +261,7 @@ export function LiveWorkoutChart({
   liveHistory,
   elapsedS,
 }: LiveWorkoutChartProps) {
+  const { theme } = useTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const plotRef = useRef<uPlot | null>(null);
 
@@ -271,6 +273,12 @@ export function LiveWorkoutChart({
 
     let cancelled = false;
     let onResize: (() => void) | null = null;
+    const isDark = theme === "dark";
+    const axisStroke = isDark ? "#9e9487" : "#5c5449";
+    const gridStroke = isDark ? "#2d2823" : "#dfd8ca";
+    const powerStroke = isDark ? "#d97745" : "#b8562b";
+    const hrStroke = isDark ? "#df6e6e" : "#a63d3d";
+    const targetStroke = isDark ? "#787065" : "#8c8273";
 
     void import("uplot")
       .then(({ default: UPlotCtor }) => {
@@ -289,28 +297,28 @@ export function LiveWorkoutChart({
             },
             axes: [
               {
-                stroke: "#a1a1aa",
-                grid: { stroke: "#27272a" },
+                stroke: axisStroke,
+                grid: { stroke: gridStroke },
                 values: (_u, vals) => vals.map((v) => `${Math.round(v / 60)}m`),
               },
               {
-                stroke: "#f97316",
-                grid: { stroke: "#27272a" },
+                stroke: powerStroke,
+                grid: { stroke: gridStroke },
                 label: "Watts",
               },
               {
                 side: 1,
                 scale: "hr",
-                stroke: "#ef4444",
+                stroke: hrStroke,
                 grid: { show: false },
                 label: "BPM",
               },
             ],
             series: [
               { label: "Time" },
-              { label: "Target W", stroke: "#52525b", width: 2, dash: [4, 4] },
-              { label: "Power W", stroke: "#f97316", width: 2.5 },
-              { label: "HR bpm", stroke: "#ef4444", width: 2, scale: "hr" },
+              { label: "Target W", stroke: targetStroke, width: 2, dash: [4, 4] },
+              { label: "Power W", stroke: powerStroke, width: 2.5 },
+              { label: "HR bpm", stroke: hrStroke, width: 2, scale: "hr" },
             ],
           },
           [[0], [null], [null], [null]],
@@ -339,7 +347,7 @@ export function LiveWorkoutChart({
         plotRef.current = null;
       }
     };
-  }, []);
+  }, [theme]);
 
   useEffect(() => {
     const plot = plotRef.current;

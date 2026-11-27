@@ -4,168 +4,482 @@
 
 :root {
   color-scheme: light;
-  --pc-chart-bg: #ffffff;
-  --pc-chart-grid: #e2e8f0;
-  --pc-chart-zero: #94a3b8;
-  --pc-chart-axis: #475569;
-  --pc-chart-cursor: #64748b;
-  --pc-chart-dot-stroke: #ffffff;
+  --pc-bg: #f4f0e8;
+  --pc-card: #fcfaf5;
+  --pc-inset: #ece6da;
+  --pc-hover: #e2dacb;
+  --pc-border: #dad1c0;
+  --pc-border-strong: #c4b8a3;
+  --pc-text: #1f1d1a;
+  --pc-text-secondary: #4a443d;
+  --pc-text-muted: #635a4f;
+  --pc-accent: #b8562b;
+  --pc-accent-hover: #9a4420;
+  --pc-sage: #2e6f56;
+  --pc-sage-hover: #235843;
+  --pc-river: #2c6478;
+  --pc-rust: #a63d3d;
+  --pc-rust-hover: #872f2f;
+  --pc-ochre: #8f5f14;
+  --pc-ochre-hover: #734c0e;
+  --pc-plum: #664978;
+  --pc-olive: #4f6b22;
+  --pc-chart-bg: #f7f4ed;
+  --pc-chart-grid: #dfd8ca;
+  --pc-chart-zero: #afa593;
+  --pc-chart-axis: #5c5449;
+  --pc-chart-cursor: #4a443d;
+  --pc-chart-dot-stroke: #fcfaf5;
+  --pc-route-track: #8c8273;
 }
 
 html.dark {
   color-scheme: dark;
-  --pc-chart-bg: #09090b;
-  --pc-chart-grid: #27272a;
-  --pc-chart-zero: #3f3f46;
-  --pc-chart-axis: #71717a;
-  --pc-chart-cursor: #a1a1aa;
-  --pc-chart-dot-stroke: #09090b;
+  --pc-bg: #141210;
+  --pc-card: #1d1a17;
+  --pc-inset: #26221e;
+  --pc-hover: #312c27;
+  --pc-border: #332d27;
+  --pc-border-strong: #473f37;
+  --pc-text: #f5f0e8;
+  --pc-text-secondary: #d4cbc0;
+  --pc-text-muted: #9e9487;
+  --pc-accent: #d97745;
+  --pc-accent-hover: #e58858;
+  --pc-sage: #4ea381;
+  --pc-sage-hover: #5eb894;
+  --pc-river: #5ca2bc;
+  --pc-rust: #df6e6e;
+  --pc-rust-hover: #eb8484;
+  --pc-ochre: #d8a244;
+  --pc-ochre-hover: #e4b45c;
+  --pc-plum: #a482ba;
+  --pc-olive: #8eb34d;
+  --pc-chart-bg: #171411;
+  --pc-chart-grid: #2d2823;
+  --pc-chart-zero: #524a42;
+  --pc-chart-axis: #9e9487;
+  --pc-chart-cursor: #d4cbc0;
+  --pc-chart-dot-stroke: #171411;
+  --pc-route-track: #787065;
 }
 
 @layer base {
   body {
     font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background-color: #f8fafc;
-    color: #0f172a;
-  }
-
-  html.dark body {
-    background-color: #09090b;
-    color: #f4f4f5;
+    background-color: var(--pc-bg);
+    color: var(--pc-text);
   }
 }
 
-/* Crisp Light Mode surface & contrast system across all pages and trainer sub-app */
+/* ==========================================================================
+   Warm Espresso Dark Mode
+   ========================================================================== */
+html.dark .bg-zinc-950,
+html.dark .bg-zinc-950\/95,
+html.dark .bg-zinc-950\/90,
+html.dark .bg-zinc-950\/80,
+html.dark .bg-zinc-950\/70,
+html.dark .bg-zinc-950\/60,
+html.dark .bg-zinc-950\/50 {
+  background-color: var(--pc-bg) !important;
+}
+html.dark .bg-zinc-900,
+html.dark .bg-zinc-900\/80,
+html.dark .bg-zinc-900\/70,
+html.dark .bg-zinc-900\/60,
+html.dark .bg-zinc-900\/50 {
+  background-color: var(--pc-card) !important;
+}
+html.dark .bg-zinc-800,
+html.dark .bg-zinc-800\/80 {
+  background-color: var(--pc-inset) !important;
+}
+html.dark .hover\:bg-zinc-800:hover,
+html.dark .hover\:bg-zinc-700:hover {
+  background-color: var(--pc-hover) !important;
+}
+html.dark .border-zinc-800,
+html.dark .border-zinc-800\/80,
+html.dark .border-zinc-800\/70,
+html.dark .border-zinc-800\/50 {
+  border-color: var(--pc-border) !important;
+}
+html.dark .border-zinc-700,
+html.dark .border-zinc-600 {
+  border-color: var(--pc-border-strong) !important;
+}
+html.dark .bg-orange-500 {
+  background-color: var(--pc-accent) !important;
+  color: #141210 !important;
+}
+html.dark .bg-orange-500:hover,
+html.dark .hover\:bg-orange-400:hover {
+  background-color: var(--pc-accent-hover) !important;
+}
+html.dark .accent-orange-500 {
+  accent-color: var(--pc-accent);
+}
+
+/* ==========================================================================
+   Earthy Light Mode (Default): Warm Oat Linen, Paper, Sand, Terracotta & Sage
+   Covers 100% of Tailwind surface, border, text, hover, focus & badge classes.
+   ========================================================================== */
+
+/* Surfaces & opacity variants */
 html:not(.dark) .bg-zinc-950 {
-  background-color: #f8fafc !important;
+  background-color: var(--pc-bg) !important;
+}
+html:not(.dark) .bg-zinc-950\/95 {
+  background-color: var(--pc-card) !important;
 }
 html:not(.dark) .bg-zinc-950\/90,
+html:not(.dark) .bg-zinc-950\/80 {
+  background-color: var(--pc-chart-bg) !important;
+}
 html:not(.dark) .bg-zinc-950\/70,
 html:not(.dark) .bg-zinc-950\/60,
 html:not(.dark) .bg-zinc-950\/50 {
-  background-color: #f1f5f9 !important;
+  background-color: var(--pc-inset) !important;
 }
-html:not(.dark) .bg-zinc-900 {
-  background-color: #ffffff !important;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+html:not(.dark) .bg-zinc-950\/30,
+html:not(.dark) .bg-zinc-950\/20 {
+  background-color: rgba(31, 29, 26, 0.09) !important;
 }
+html:not(.dark) .bg-zinc-900,
+html:not(.dark) .bg-zinc-900\/80,
 html:not(.dark) .bg-zinc-900\/70,
 html:not(.dark) .bg-zinc-900\/60,
 html:not(.dark) .bg-zinc-900\/50 {
-  background-color: rgba(255, 255, 255, 0.92) !important;
+  background-color: var(--pc-card) !important;
+  box-shadow: 0 1px 2px rgba(41, 37, 36, 0.05);
 }
 html:not(.dark) .bg-zinc-800,
 html:not(.dark) .bg-zinc-800\/80 {
-  background-color: #f1f5f9 !important;
+  background-color: var(--pc-inset) !important;
+}
+html:not(.dark) .bg-zinc-700 {
+  background-color: var(--pc-hover) !important;
+}
+html:not(.dark) .bg-zinc-500 {
+  background-color: #8c8273 !important;
+}
+html:not(.dark) .bg-zinc-400 {
+  background-color: #9e9381 !important;
+}
+html:not(.dark) .hover\:bg-zinc-900:hover {
+  background-color: var(--pc-inset) !important;
 }
 html:not(.dark) .hover\:bg-zinc-800:hover,
 html:not(.dark) .hover\:bg-zinc-700:hover {
-  background-color: #e2e8f0 !important;
+  background-color: var(--pc-hover) !important;
 }
-html:not(.dark) .bg-zinc-700 {
-  background-color: #e2e8f0 !important;
+html:not(.dark) .bg-rose-950,
+html:not(.dark) .hover\:bg-rose-950\/50:hover {
+  background-color: rgba(166, 61, 61, 0.12) !important;
 }
+
+/* Borders & Focus */
 html:not(.dark) .border-zinc-800,
 html:not(.dark) .border-zinc-800\/80,
 html:not(.dark) .border-zinc-800\/70,
 html:not(.dark) .border-zinc-800\/50 {
-  border-color: #e2e8f0 !important;
+  border-color: var(--pc-border) !important;
 }
 html:not(.dark) .border-zinc-700,
 html:not(.dark) .border-zinc-600 {
-  border-color: #cbd5e1 !important;
+  border-color: var(--pc-border-strong) !important;
+}
+html:not(.dark) .border-zinc-500,
+html:not(.dark) .border-zinc-400 {
+  border-color: #968a78 !important;
 }
 html:not(.dark) .hover\:border-zinc-700:hover,
 html:not(.dark) .hover\:border-zinc-500:hover {
-  border-color: #94a3b8 !important;
+  border-color: #968a78 !important;
+}
+html:not(.dark) .focus\:border-orange-500:focus {
+  border-color: var(--pc-accent) !important;
 }
 
-/* Crisp typography contrast in Light Mode */
-html:not(.dark) .text-white {
-  color: #0f172a !important;
-}
+/* Typography & Hover Typography */
+html:not(.dark) .text-white,
 html:not(.dark) .hover\:text-white:hover {
-  color: #0f172a !important;
+  color: var(--pc-text) !important;
 }
 html:not(.dark) .text-zinc-100,
-html:not(.dark) .text-zinc-200 {
-  color: #1e293b !important;
+html:not(.dark) .text-zinc-200,
+html:not(.dark) .hover\:text-zinc-200:hover {
+  color: #2c2824 !important;
 }
-html:not(.dark) .text-zinc-300 {
-  color: #334155 !important;
+html:not(.dark) .text-zinc-300,
+html:not(.dark) .hover\:text-zinc-300:hover {
+  color: var(--pc-text-secondary) !important;
 }
 html:not(.dark) .text-zinc-400 {
-  color: #475569 !important;
+  color: #5c5449 !important;
 }
-html:not(.dark) .text-zinc-500 {
-  color: #64748b !important;
+html:not(.dark) .text-zinc-500,
+html:not(.dark) .text-zinc-600 {
+  color: var(--pc-text-muted) !important;
+}
+html:not(.dark) .placeholder\:text-zinc-500::placeholder {
+  color: #8c8273 !important;
 }
 
-/* Primary accent buttons stay vibrant with crisp white text in Light Mode */
+/* Primary Terracotta Accent & Solid Action Buttons */
 html:not(.dark) .bg-orange-500 {
-  background-color: #ea580c !important;
-  color: #ffffff !important;
+  background-color: var(--pc-accent) !important;
+  color: #fcfaf5 !important;
 }
-html:not(.dark) .bg-orange-500:hover {
-  background-color: #c2410c !important;
+html:not(.dark) .bg-orange-500:hover,
+html:not(.dark) .hover\:bg-orange-400:hover {
+  background-color: var(--pc-accent-hover) !important;
 }
-html:not(.dark) .bg-orange-500 .text-zinc-950,
-html:not(.dark) .bg-orange-500.text-zinc-950 {
-  color: #ffffff !important;
+html:not(.dark) .bg-orange-500.text-zinc-950,
+html:not(.dark) .bg-orange-500 .text-zinc-950 {
+  color: #fcfaf5 !important;
+}
+html:not(.dark) .bg-orange-500 .bg-zinc-950\/20,
+html:not(.dark) .bg-orange-500 .bg-zinc-950\/30 {
+  background-color: rgba(252, 250, 245, 0.24) !important;
+  color: #fcfaf5 !important;
+}
+html:not(.dark) .bg-orange-500 .bg-zinc-200 {
+  background-color: #fcfaf5 !important;
+}
+html:not(.dark) .bg-orange-500\/80 {
+  background-color: rgba(184, 86, 43, 0.85) !important;
+}
+html:not(.dark) .bg-orange-500\/10,
+html:not(.dark) .bg-orange-500\/15,
+html:not(.dark) .bg-orange-500\/20 {
+  background-color: rgba(184, 86, 43, 0.12) !important;
+}
+html:not(.dark) .hover\:bg-orange-500\/20:hover,
+html:not(.dark) .hover\:bg-orange-500\/25:hover {
+  background-color: rgba(184, 86, 43, 0.2) !important;
+}
+html:not(.dark) .border-orange-500,
+html:not(.dark) .border-orange-400 {
+  border-color: var(--pc-accent) !important;
+}
+html:not(.dark) .border-orange-500\/30,
+html:not(.dark) .border-orange-500\/40,
+html:not(.dark) .border-orange-500\/60,
+html:not(.dark) .border-orange-500\/70 {
+  border-color: rgba(184, 86, 43, 0.36) !important;
+}
+html:not(.dark) .accent-orange-500 {
+  accent-color: var(--pc-accent);
+}
+html:not(.dark) .bg-emerald-500 {
+  background-color: var(--pc-sage) !important;
+  color: #fcfaf5 !important;
+}
+html:not(.dark) .bg-emerald-500:hover,
+html:not(.dark) .hover\:bg-emerald-400:hover {
+  background-color: var(--pc-sage-hover) !important;
+}
+html:not(.dark) .bg-amber-500 {
+  background-color: var(--pc-ochre) !important;
+  color: #fcfaf5 !important;
+}
+html:not(.dark) .bg-amber-500:hover,
+html:not(.dark) .hover\:bg-amber-400:hover {
+  background-color: var(--pc-ochre-hover) !important;
+}
+html:not(.dark) .bg-zinc-200.text-zinc-950 {
+  background-color: var(--pc-text) !important;
+  color: #fcfaf5 !important;
 }
 
-/* Readable semantic text accents on white/light backgrounds */
+/* Soft Earthy Tinted Badges, Active Filter Pills & Alert Banners */
+html:not(.dark) .bg-emerald-500\/10,
+html:not(.dark) .bg-emerald-500\/15,
+html:not(.dark) .bg-emerald-500\/20 {
+  background-color: rgba(46, 111, 86, 0.11) !important;
+}
+html:not(.dark) .hover\:bg-emerald-500\/20:hover {
+  background-color: rgba(46, 111, 86, 0.19) !important;
+}
+html:not(.dark) .border-emerald-500,
+html:not(.dark) .border-emerald-400 {
+  border-color: var(--pc-sage) !important;
+}
+html:not(.dark) .border-emerald-500\/30,
+html:not(.dark) .border-emerald-500\/40 {
+  border-color: rgba(46, 111, 86, 0.34) !important;
+}
+html:not(.dark) .bg-sky-500\/15,
+html:not(.dark) .bg-sky-500\/20,
+html:not(.dark) .bg-blue-500\/15,
+html:not(.dark) .bg-blue-500\/20 {
+  background-color: rgba(44, 100, 120, 0.11) !important;
+}
+html:not(.dark) .border-sky-500,
+html:not(.dark) .border-blue-500,
+html:not(.dark) .border-blue-400 {
+  border-color: var(--pc-river) !important;
+}
+html:not(.dark) .border-sky-500\/30,
+html:not(.dark) .border-sky-500\/40,
+html:not(.dark) .border-blue-500\/30 {
+  border-color: rgba(44, 100, 120, 0.34) !important;
+}
+html:not(.dark) .bg-violet-500\/15,
+html:not(.dark) .bg-violet-500\/20 {
+  background-color: rgba(102, 73, 120, 0.11) !important;
+}
+html:not(.dark) .border-violet-500,
+html:not(.dark) .border-violet-400 {
+  border-color: var(--pc-plum) !important;
+}
+html:not(.dark) .border-violet-500\/30 {
+  border-color: rgba(102, 73, 120, 0.34) !important;
+}
+html:not(.dark) .bg-rose-500\/10,
+html:not(.dark) .bg-rose-500\/15,
+html:not(.dark) .bg-rose-500\/20,
+html:not(.dark) .bg-red-500\/15,
+html:not(.dark) .bg-red-500\/20 {
+  background-color: rgba(166, 61, 61, 0.1) !important;
+}
+html:not(.dark) .border-rose-500,
+html:not(.dark) .border-rose-400,
+html:not(.dark) .hover\:border-rose-400:hover,
+html:not(.dark) .border-red-500,
+html:not(.dark) .border-red-400 {
+  border-color: var(--pc-rust) !important;
+}
+html:not(.dark) .border-rose-500\/30,
+html:not(.dark) .border-rose-500\/40,
+html:not(.dark) .border-red-500\/30,
+html:not(.dark) .border-red-500\/40 {
+  border-color: rgba(166, 61, 61, 0.34) !important;
+}
+html:not(.dark) .bg-amber-500\/15,
+html:not(.dark) .bg-amber-500\/20,
+html:not(.dark) .bg-yellow-500\/15,
+html:not(.dark) .bg-yellow-500\/20 {
+  background-color: rgba(143, 95, 20, 0.12) !important;
+}
+html:not(.dark) .border-amber-500,
+html:not(.dark) .border-yellow-500,
+html:not(.dark) .border-yellow-400 {
+  border-color: var(--pc-ochre) !important;
+}
+html:not(.dark) .border-amber-500\/50,
+html:not(.dark) .border-yellow-500\/30,
+html:not(.dark) .border-yellow-500\/40 {
+  border-color: rgba(143, 95, 20, 0.36) !important;
+}
+html:not(.dark) .bg-lime-500\/15,
+html:not(.dark) .bg-lime-500\/20 {
+  background-color: rgba(79, 107, 34, 0.12) !important;
+}
+html:not(.dark) .border-lime-500,
+html:not(.dark) .border-lime-400 {
+  border-color: var(--pc-olive) !important;
+}
+html:not(.dark) .border-lime-500\/30,
+html:not(.dark) .border-lime-500\/40 {
+  border-color: rgba(79, 107, 34, 0.34) !important;
+}
+
+/* Readable Earthy Text Accents & Hover States (WCAG AA/AAA on warm paper) */
+html:not(.dark) .text-orange-500,
 html:not(.dark) .text-orange-400,
 html:not(.dark) .text-orange-300,
 html:not(.dark) .text-orange-200,
 html:not(.dark) .text-orange-100 {
-  color: #c2410c !important;
+  color: var(--pc-accent) !important;
+}
+html:not(.dark) .hover\:text-orange-300:hover {
+  color: var(--pc-accent-hover) !important;
 }
 html:not(.dark) .text-emerald-400,
+html:not(.dark) .text-emerald-400\/90,
 html:not(.dark) .text-emerald-300,
+html:not(.dark) .text-emerald-300\/80,
 html:not(.dark) .text-emerald-200,
 html:not(.dark) .text-emerald-100 {
-  color: #047857 !important;
+  color: var(--pc-sage) !important;
+}
+html:not(.dark) .hover\:text-emerald-300:hover,
+html:not(.dark) .hover\:text-emerald-100:hover {
+  color: var(--pc-sage-hover) !important;
 }
 html:not(.dark) .text-sky-400,
-html:not(.dark) .text-sky-300 {
-  color: #0369a1 !important;
-}
+html:not(.dark) .text-sky-300,
 html:not(.dark) .text-blue-300,
 html:not(.dark) .text-blue-100 {
-  color: #1d4ed8 !important;
+  color: var(--pc-river) !important;
 }
-html:not(.dark) .text-violet-300,
 html:not(.dark) .text-violet-400,
-html:not(.dark) .text-violet-100 {
-  color: #6d28d9 !important;
-}
+html:not(.dark) .text-violet-300,
+html:not(.dark) .text-violet-100,
 html:not(.dark) .text-indigo-300 {
-  color: #4338ca !important;
+  color: var(--pc-plum) !important;
 }
 html:not(.dark) .text-rose-400,
+html:not(.dark) .text-rose-400\/80,
 html:not(.dark) .text-rose-300,
 html:not(.dark) .text-rose-200,
-html:not(.dark) .text-rose-100 {
-  color: #be123c !important;
+html:not(.dark) .text-rose-100,
+html:not(.dark) .text-red-300,
+html:not(.dark) .text-red-100 {
+  color: var(--pc-rust) !important;
+}
+html:not(.dark) .hover\:text-rose-400:hover,
+html:not(.dark) .hover\:text-rose-300:hover,
+html:not(.dark) .hover\:text-rose-200:hover {
+  color: var(--pc-rust-hover) !important;
 }
 html:not(.dark) .text-amber-400,
-html:not(.dark) .text-amber-300 {
-  color: #b45309 !important;
-}
+html:not(.dark) .text-amber-300,
+html:not(.dark) .text-amber-200,
 html:not(.dark) .text-yellow-200,
 html:not(.dark) .text-yellow-100 {
-  color: #a16207 !important;
+  color: var(--pc-ochre) !important;
 }
 html:not(.dark) .text-lime-300,
 html:not(.dark) .text-lime-100 {
-  color: #4d7c0f !important;
+  color: var(--pc-olive) !important;
 }
-html:not(.dark) .text-red-300,
-html:not(.dark) .text-red-100 {
-  color: #b91c1c !important;
+
+/* Status dots stay distinct and organic in Light Mode */
+html:not(.dark) .bg-orange-400 {
+  background-color: var(--pc-accent) !important;
 }
-html:not(.dark) .bg-zinc-200.text-zinc-950 {
-  background-color: #0f172a !important;
-  color: #ffffff !important;
+html:not(.dark) .bg-emerald-400 {
+  background-color: var(--pc-sage) !important;
+}
+html:not(.dark) .bg-sky-400,
+html:not(.dark) .bg-blue-400 {
+  background-color: var(--pc-river) !important;
+}
+html:not(.dark) .bg-violet-400 {
+  background-color: var(--pc-plum) !important;
+}
+html:not(.dark) .bg-rose-400,
+html:not(.dark) .bg-red-500 {
+  background-color: var(--pc-rust) !important;
+}
+html:not(.dark) .bg-amber-400,
+html:not(.dark) .bg-yellow-400 {
+  background-color: var(--pc-ochre) !important;
+}
+html:not(.dark) .bg-lime-400 {
+  background-color: var(--pc-olive) !important;
+}
+
+/* Keep connected green dot crisp when rendered inside an active terracotta pill */
+html:not(.dark) .bg-orange-500 .bg-emerald-400 {
+  background-color: #a7f3d0 !important;
+}
+
+/* uPlot legend readability in Light Mode */
+html:not(.dark) .u-legend {
+  color: var(--pc-text-secondary) !important;
 }

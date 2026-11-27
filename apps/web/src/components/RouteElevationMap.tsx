@@ -15,12 +15,12 @@ export interface RouteElevationMapProps {
 }
 
 function gradeColor(gradePct: number): string {
-  if (gradePct >= 10) return "#ef4444"; // red-500
-  if (gradePct >= 7) return "#f97316"; // orange-500
-  if (gradePct >= 5) return "#eab308"; // yellow-500
-  if (gradePct >= 3) return "#84cc16"; // lime-500
-  if (gradePct >= -1) return "#10b981"; // emerald-500
-  return "#38bdf8"; // sky-400 descent
+  if (gradePct >= 10) return "#a63d3d"; // brick rust
+  if (gradePct >= 7) return "#b8562b"; // burnt terracotta
+  if (gradePct >= 5) return "#b58322"; // warm ochre
+  if (gradePct >= 3) return "#6b8733"; // olive moss
+  if (gradePct >= -1) return "#2e6f56"; // forest sage
+  return "#3b7a8c"; // river slate descent
 }
 
 function gradeBadgeClass(gradePct: number): string {
@@ -238,7 +238,7 @@ export function RouteElevationMap({
         <svg
           viewBox={`0 0 ${elevWidth} ${elevHeight}`}
           aria-label={`Elevation profile for ${name}`}
-          className="w-full rounded-xl bg-zinc-950/80"
+          className="w-full rounded-xl border border-zinc-800 bg-zinc-950/80"
         >
           {profile.grades.map((grade, idx) => {
             const p0 = points[idx];
@@ -273,13 +273,13 @@ export function RouteElevationMap({
           })}
 
           {/* Axis labels */}
-          <text x={padX} y={elevHeight - 4} fill="#71717a" fontSize={10}>
+          <text x={padX} y={elevHeight - 4} fill="var(--pc-chart-axis)" fontSize={10}>
             0 km · {Math.round(profile.minElevM)}m–{Math.round(profile.maxElevM)}m
           </text>
           <text
             x={elevWidth - padX}
             y={elevHeight - 4}
-            fill="#71717a"
+            fill="var(--pc-chart-axis)"
             fontSize={10}
             textAnchor="end"
           >
@@ -294,17 +294,17 @@ export function RouteElevationMap({
                 y1={padTop}
                 x2={xForDist(riderPoint.distM)}
                 y2={padTop + plotH}
-                stroke="#ffffff"
+                stroke="var(--pc-chart-cursor)"
                 strokeWidth={1.2}
                 strokeDasharray="3 3"
-                strokeOpacity={0.7}
+                strokeOpacity={0.75}
               />
               <circle
                 cx={xForDist(riderPoint.distM)}
                 cy={yForElev(riderPoint.elevation_m)}
                 r={5}
-                fill="#f97316"
-                stroke="#ffffff"
+                fill="var(--pc-accent)"
+                stroke="var(--pc-chart-dot-stroke)"
                 strokeWidth={2}
               />
             </g>
@@ -316,12 +316,12 @@ export function RouteElevationMap({
           <svg
             viewBox={`0 0 ${mapWidth} ${mapHeight}`}
             aria-label={`Route map for ${name}`}
-            className="w-full rounded-xl bg-zinc-950/80 md:w-52"
+            className="w-full rounded-xl border border-zinc-800 bg-zinc-950/80 md:w-52"
           >
             <polyline
               points={mapProjection.polyline}
               fill="none"
-              stroke="#52525b"
+              stroke="var(--pc-route-track)"
               strokeWidth={3}
               strokeLinejoin="round"
               strokeLinecap="round"
@@ -330,7 +330,7 @@ export function RouteElevationMap({
               cx={mapProjection.start.x}
               cy={mapProjection.start.y}
               r={3.5}
-              fill="#10b981"
+              fill="var(--pc-sage)"
             />
             {riderPoint && (() => {
               const xy = mapProjection.project(riderPoint);
@@ -339,8 +339,8 @@ export function RouteElevationMap({
                   cx={xy.x}
                   cy={xy.y}
                   r={5}
-                  fill="#f97316"
-                  stroke="#ffffff"
+                  fill="var(--pc-accent)"
+                  stroke="var(--pc-chart-dot-stroke)"
                   strokeWidth={2}
                 />
               );

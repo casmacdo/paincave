@@ -8,8 +8,6 @@ import {
 import { useI18n } from "../lib/i18n.js";
 
 interface OverviewPageProps {
-  indoorTrainerEnabled: boolean;
-  onOpenTrainer: () => void;
   onNavigateTab: (tab: "calendar" | "workouts" | "trends" | "settings") => void;
 }
 
@@ -27,11 +25,7 @@ function formatPace(secPerKm: number | null | undefined): string {
   return `${mins}:${String(secs).padStart(2, "0")}/km`;
 }
 
-export function OverviewPage({
-  indoorTrainerEnabled,
-  onOpenTrainer,
-  onNavigateTab,
-}: OverviewPageProps) {
+export function OverviewPage({ onNavigateTab }: OverviewPageProps) {
   const { t, locale } = useI18n();
   const [loading, setLoading] = useState(true);
   const [fitness, setFitness] = useState<FitnessOverviewResponse | null>(null);
@@ -136,15 +130,6 @@ export function OverviewPage({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {indoorTrainerEnabled && (
-            <button
-              type="button"
-              onClick={onOpenTrainer}
-              className="rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400"
-            >
-              {t("overview.open_trainer")}
-            </button>
-          )}
           <button
             type="button"
             onClick={() => onNavigateTab("settings")}

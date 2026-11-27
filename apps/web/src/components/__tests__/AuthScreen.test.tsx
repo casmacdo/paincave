@@ -134,4 +134,45 @@ describe("AuthScreen (Single-User Better Auth)", () => {
 
     expect(screen.getByRole("alert").textContent).toContain("single owner account");
   });
+
+  it("allows an invited second user to register via email/password when allow_registration is true", async () => {
+    mockAuthClient.signUp.email.mockResolvedValue({ data: { user: { id: "u2" } }, error: null });
+    const onAuthenticated = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <AuthScreen
+        authState={{
+          authenticated: false,
+          configured: true,
+          has_owner: true,
+          owner_email_restricted: true,
+          allow_registration: true,
+          providers: {
+            email_password: true,
+            passkey: true,
+            google: true,
+            legacy_password: false,
+          },
+        }}
+        onAuthenticated={onAuthenticated}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Invited user\? Create an account/i }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Invited Runner" } });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "runner@example.com" } });
+    fireEvent.change(screen.getByLabelText("Password"), {
+      target: { value: "strong-password-456" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Account" }));
+
+    await waitFor(() => {
+      expect(mockAuthClient.signUp.email).toHaveBeenCalledWith({
+        name: "Invited Runner",
+        email: "runner@example.com",
+        password: "strong-password-456",
+      });
+      expect(onAuthenticated).toHaveBeenCalledTimes(1);
+    });
+  });
 });

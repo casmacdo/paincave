@@ -41,6 +41,7 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
     legacy_password: true,
   };
   const hasOwner = authState.has_owner ?? false;
+  const allowRegistration = authState.allow_registration ?? !hasOwner;
   const [mode, setMode] = useState<"sign_in" | "claim_owner">(
     hasOwner ? "sign_in" : "claim_owner"
   );
@@ -67,14 +68,14 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
     setSubmitting(true);
     setError(null);
     try {
-      if (mode === "claim_owner" && !hasOwner) {
+      if (mode === "claim_owner" && allowRegistration) {
         const res = await authClient.signUp.email({
           name: name.trim() || "Athlete",
           email: email.trim(),
           password,
         });
         if (res.error) {
-          setError(res.error.message ?? "Could not create owner account");
+          setError(res.error.message ?? "Could not create account");
           return;
         }
       } else {
@@ -247,7 +248,7 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
         {/* Email & Password Form */}
         {providers.email_password && (
           <form onSubmit={(e) => void handleEmailSubmit(e)} className="space-y-3">
-            {!hasOwner && mode === "claim_owner" && (
+            {allowRegistration && mode === "claim_owner" && (
               <div>
                 <label htmlFor="auth-name" className="block text-xs font-medium text-zinc-400">
                   {t("auth.name")}
@@ -307,20 +308,28 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
             >
               {submitting
                 ? t("auth.please_wait")
-                : mode === "claim_owner" && !hasOwner
-                  ? t("auth.create_owner")
+                : mode === "claim_owner" && allowRegistration
+                  ? hasOwner
+                    ? locale === "fr-CA"
+                      ? "Créer un compte"
+                      : "Create Account"
+                    : t("auth.create_owner")
                   : t("auth.sign_in")}
             </button>
 
-            {!hasOwner && (
+            {allowRegistration && (
               <button
                 type="button"
                 onClick={() => setMode(mode === "claim_owner" ? "sign_in" : "claim_owner")}
                 className="w-full text-center text-xs text-zinc-400 hover:text-zinc-200"
               >
                 {mode === "claim_owner"
-                  ? "Already have an account? Sign in"
-                  : "First time here? Create owner account"}
+                  ? locale === "fr-CA"
+                    ? "Déjà inscrit? Se connecter"
+                    : "Already have an account? Sign in"
+                  : locale === "fr-CA"
+                    ? "Compte invité? Créer mon compte"
+                    : "Invited user? Create an account"}
               </button>
             )}
           </form>

@@ -90,7 +90,7 @@ describe("WorkoutProfileSvg hover and focus details", () => {
     render(<WorkoutProfileSvg steps={mixedSteps} ftpWatts={260} />);
 
     const z2Poly = screen.getByTestId("workout-profile-step-0");
-    expect(z2Poly.getAttribute("fill")).toBe("#3b82f6");
+    expect(z2Poly.getAttribute("fill")).toBe("#3b7a8c");
     fireEvent.mouseEnter(z2Poly);
     expect(screen.getByTestId("workout-profile-tooltip").textContent).toContain("Z2");
 

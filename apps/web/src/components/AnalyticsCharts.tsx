@@ -104,10 +104,10 @@ export function PmcChart({ data }: { data: FitnessOverviewResponse["daily_pmc"] 
           </g>
         ))}
 
-        {tsbArea && <path d={tsbArea} fill="#10b981" fillOpacity={0.14} />}
-        <path d={tsbPath} fill="none" stroke="#10b981" strokeWidth={1.6} />
-        <path d={atlPath} fill="none" stroke="#fb7185" strokeWidth={1.8} />
-        <path d={ctlPath} fill="none" stroke="#38bdf8" strokeWidth={2.4} />
+        {tsbArea && <path d={tsbArea} fill="var(--pc-sage)" fillOpacity={0.14} />}
+        <path d={tsbPath} fill="none" stroke="var(--pc-sage)" strokeWidth={1.7} />
+        <path d={atlPath} fill="none" stroke="var(--pc-rust)" strokeWidth={1.8} />
+        <path d={ctlPath} fill="none" stroke="var(--pc-river)" strokeWidth={2.4} />
 
         {active && hoverIdx !== null && (
           <line
@@ -239,7 +239,7 @@ export function MmpCurveChart({
           <path d={buildPath(mmp90)} fill="none" stroke="var(--pc-chart-cursor)" strokeWidth={1.6} strokeDasharray="4 4" />
         )}
         {mmp42.length > 0 && (
-          <path d={buildPath(mmp42)} fill="none" stroke="#f97316" strokeWidth={2.5} />
+          <path d={buildPath(mmp42)} fill="none" stroke="var(--pc-accent)" strokeWidth={2.5} />
         )}
 
         {durations.map((dur) => {
@@ -254,7 +254,7 @@ export function MmpCurveChart({
                   cx={x}
                   cy={yOf(pt42.watts)}
                   r={active ? 5 : 3}
-                  fill="#f97316"
+                  fill="var(--pc-accent)"
                   stroke="var(--pc-chart-dot-stroke)"
                   strokeWidth={1.5}
                 />
@@ -388,9 +388,9 @@ export function RideTimeseriesChart({ points }: { points: readonly RideTimeserie
           </g>
         ))}
 
-        {powerArea && <path d={powerArea} fill="#f97316" fillOpacity={0.2} />}
-        {powerLine && <path d={powerLine} fill="none" stroke="#f97316" strokeWidth={1.8} />}
-        {hrLine && <path d={hrLine} fill="none" stroke="#fb7185" strokeWidth={1.6} />}
+        {powerArea && <path d={powerArea} fill="var(--pc-accent)" fillOpacity={0.18} />}
+        {powerLine && <path d={powerLine} fill="none" stroke="var(--pc-accent)" strokeWidth={1.9} />}
+        {hrLine && <path d={hrLine} fill="none" stroke="var(--pc-rust)" strokeWidth={1.7} />}
 
         {active && (
           <line

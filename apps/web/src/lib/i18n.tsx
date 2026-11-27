@@ -15,8 +15,20 @@ const MESSAGES = {
   "nav.trainer_short": { "fr-CA": "Base d'entraînement", en: "Trainer" },
   "nav.back_to_overview": { "fr-CA": "← Retour à l'aperçu", en: "← Back to Overview" },
   "nav.live_ride": { "fr-CA": "Séance en direct", en: "Live Ride" },
+  "nav.live_ride_desc": {
+    "fr-CA": "ERG, pente, résistance et télémétrie en temps réel",
+    en: "ERG, slope, resistance & live telemetry",
+  },
   "nav.routes": { "fr-CA": "Parcours", en: "Routes" },
+  "nav.routes_desc": {
+    "fr-CA": "GPX, mode SIM et profils d'élévation",
+    en: "GPX climbs, SIM mode & elevation profiles",
+  },
   "nav.bridge": { "fr-CA": "Passerelle", en: "Bridge" },
+  "nav.bridge_desc": {
+    "fr-CA": "Connexion locale de la base et envoi Strava",
+    en: "Local trainer bridge & Strava auto-upload",
+  },
   "nav.bridge_connected": { "fr-CA": "Base connectée", en: "Bridge Connected" },
   "nav.bridge_offline": { "fr-CA": "Base hors ligne", en: "Bridge Offline" },
   "nav.loading": { "fr-CA": "Chargement de", en: "Loading" },
@@ -182,7 +194,7 @@ const MESSAGES = {
   },
   "settings.create_token": { "fr-CA": "Créer le jeton", en: "Create Token" },
   "settings.revoke": { "fr-CA": "Révoquer", en: "Revoke" },
-  "settings.account_title": { "fr-CA": "Compte et sécurité", en: "Account & Security (Better Auth)" },
+  "settings.account_title": { "fr-CA": "Compte et sécurité", en: "Account & Security" },
   "settings.sign_out": { "fr-CA": "Se déconnecter", en: "Sign Out" },
   "settings.mcp_title": { "fr-CA": "Connecteur IA distant (Remote MCP)", en: "Remote MCP — Planning & Analysis" },
 

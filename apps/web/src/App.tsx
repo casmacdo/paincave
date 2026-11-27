@@ -11,6 +11,7 @@ import { I18nProvider, useI18n } from "./lib/i18n.js";
 import { ThemeProvider, useTheme } from "./lib/theme.js";
 import { AuthScreen } from "./components/AuthScreen.js";
 import { PasskeyPromptBanner } from "./components/PasskeyPromptBanner.js";
+import { TrainerMenu } from "./components/TrainerMenu.js";
 import { OverviewPage } from "./pages/OverviewPage.js";
 import { CalendarPage } from "./pages/CalendarPage.js";
 import { WorkoutsPage } from "./pages/WorkoutsPage.js";
@@ -71,10 +72,6 @@ function AppShell() {
     const prof = await api.getProfile();
     setProfile(prof.profile);
     setThresholds(prof.latest_thresholds);
-    const trainerEnabled = prof.profile?.features?.indoor_trainer ?? true;
-    if (!trainerEnabled) {
-      setTab((prev) => (prev === "trainer" ? "overview" : prev));
-    }
   }, []);
 
   const refreshAuthState = useCallback(async () => {
@@ -157,7 +154,6 @@ function AppShell() {
   }
 
   const ftpWatts = thresholds?.ftp_watts ?? 250;
-  const indoorTrainerEnabled = profile?.features?.indoor_trainer ?? true;
   const coreNavItems: readonly [Exclude<CoreTabKey, "trainer">, string][] = [
     ["overview", t("nav.overview")],
     ["calendar", t("nav.calendar")],
@@ -165,6 +161,11 @@ function AppShell() {
     ["trends", t("nav.trends")],
     ["settings", t("nav.settings")],
   ];
+
+  const handleOpenTrainerSubTab = (subTab: TrainerSubTab) => {
+    setTrainerSubTab(subTab);
+    setTab("trainer");
+  };
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -197,25 +198,12 @@ function AppShell() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            {indoorTrainerEnabled && (
-              <button
-                type="button"
-                onClick={() => setTab("trainer")}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-semibold transition ${
-                  tab === "trainer"
-                    ? "border-orange-500 bg-orange-500 text-zinc-950"
-                    : "border-orange-500/40 bg-orange-500/10 text-orange-300 hover:bg-orange-500/20"
-                }`}
-                title={t("nav.trainer_app")}
-              >
-                <span
-                  className={`h-2 w-2 rounded-full ${
-                    bridgeSnapshot.connected ? "bg-emerald-400" : "bg-zinc-400"
-                  }`}
-                />
-                {t("nav.trainer_app")}
-              </button>
-            )}
+            <TrainerMenu
+              active={tab === "trainer"}
+              activeSubTab={trainerSubTab}
+              bridgeConnected={bridgeSnapshot.connected}
+              onSelect={handleOpenTrainerSubTab}
+            />
 
             <div
               role="group"
@@ -270,25 +258,17 @@ function AppShell() {
         <PasskeyPromptBanner authState={authState} />
 
         {tab === "overview" && (
-          <OverviewPage
-            indoorTrainerEnabled={indoorTrainerEnabled}
-            onOpenTrainer={() => setTab("trainer")}
-            onNavigateTab={(next) => setTab(next)}
-          />
+          <OverviewPage onNavigateTab={(next) => setTab(next)} />
         )}
 
         {tab === "calendar" && (
-          <CalendarPage
-            indoorTrainerEnabled={indoorTrainerEnabled}
-            onLoadWorkout={handleLoadWorkoutOnTrainer}
-          />
+          <CalendarPage onLoadWorkout={handleLoadWorkoutOnTrainer} />
         )}
 
         {tab === "workouts" && (
           <WorkoutsPage
             ftpWatts={ftpWatts}
             thresholdPaceSPerKm={thresholds?.threshold_pace_s_per_km ?? null}
-            indoorTrainerEnabled={indoorTrainerEnabled}
             onLoadWorkout={handleLoadWorkoutOnTrainer}
           />
         )}
@@ -305,7 +285,7 @@ function AppShell() {
           />
         )}
 
-        {tab === "trainer" && indoorTrainerEnabled && (
+        {tab === "trainer" && (
           <TrainerWorkspace
             subTab={trainerSubTab}
             onChangeSubTab={setTrainerSubTab}

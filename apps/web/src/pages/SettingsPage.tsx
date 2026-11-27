@@ -50,7 +50,6 @@ function buildSevenDayChunks(startDay: string, endDay: string): { start: string;
 }
 
 export function SettingsPage({
-  profile,
   latestThresholds,
   onThresholdsUpdated,
   authState,
@@ -64,7 +63,6 @@ export function SettingsPage({
   const [lthr, setLthr] = useState(String(latestThresholds?.lthr_bpm ?? 170));
   const [hrmax, setHrmax] = useState(String(latestThresholds?.hrmax_bpm ?? 190));
   const [weight, setWeight] = useState(String(latestThresholds?.weight_kg ?? 72));
-  const [indoorTrainer, setIndoorTrainer] = useState(profile?.features?.indoor_trainer ?? true);
 
   // Garmin state & date-range backfill
   const [garmin, setGarmin] = useState<{
@@ -156,21 +154,6 @@ export function SettingsPage({
     await onThresholdsUpdated();
     setSavedMsg(
       locale === "fr-CA" ? "Seuils enregistrés." : "Saved new dated threshold snapshot."
-    );
-  };
-
-  const handleToggleIndoorTrainer = async (enabled: boolean) => {
-    setIndoorTrainer(enabled);
-    await api.updateProfile({ features: { indoor_trainer: enabled } });
-    await onThresholdsUpdated();
-    setSavedMsg(
-      enabled
-        ? locale === "fr-CA"
-          ? "PainCave : Base d'entraînement activé."
-          : "Enabled PainCave: Trainer app."
-        : locale === "fr-CA"
-          ? "PainCave : Base d'entraînement masqué."
-          : "Hidden PainCave: Trainer app."
     );
   };
 
@@ -564,89 +547,69 @@ export function SettingsPage({
           )}
         </section>
 
-        {/* Thresholds + Apps & Modules */}
-        <div className="space-y-6">
-          <section className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-            <h2 className="text-lg font-bold text-white">{t("settings.apps_title")}</h2>
-            <label className="flex cursor-pointer items-start justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3.5">
-              <div className="space-y-0.5">
-                <div className="text-sm font-semibold text-white">
-                  {t("settings.trainer_toggle_title")}
-                </div>
-                <p className="text-xs text-zinc-400">{t("settings.trainer_toggle_desc")}</p>
-              </div>
+        {/* Athlete Thresholds */}
+        <form
+          onSubmit={(e) => void handleSaveThresholds(e)}
+          className="space-y-4 self-start rounded-2xl border border-zinc-800 bg-zinc-900 p-5"
+        >
+          <h2 className="text-lg font-bold text-white">{t("settings.thresholds_title")}</h2>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="text-xs text-zinc-400">
+              {locale === "fr-CA" ? "FTP vélo (Watts, optionnel)" : "FTP (Watts, optional)"}
               <input
-                type="checkbox"
-                checked={indoorTrainer}
-                onChange={(e) => void handleToggleIndoorTrainer(e.target.checked)}
-                className="mt-1 h-4 w-4 shrink-0 accent-orange-500"
+                type="number"
+                value={ftp}
+                onChange={(e) => setFtp(e.target.value)}
+                placeholder="250"
+                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-sm text-white"
               />
             </label>
-          </section>
-
-          <form
-            onSubmit={(e) => void handleSaveThresholds(e)}
-            className="space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900 p-5"
+            <label className="text-xs text-zinc-400">
+              {locale === "fr-CA" ? "Allure seuil course (sec/km)" : "Run Threshold Pace (sec/km)"}
+              <input
+                type="number"
+                value={thresholdPace}
+                onChange={(e) => setThresholdPace(e.target.value)}
+                placeholder="270 (4:30/km)"
+                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-sm text-white"
+              />
+            </label>
+            <label className="text-xs text-zinc-400">
+              {locale === "fr-CA" ? "FC seuil (BPM)" : "LTHR (BPM)"}
+              <input
+                type="number"
+                value={lthr}
+                onChange={(e) => setLthr(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-sm text-white"
+              />
+            </label>
+            <label className="text-xs text-zinc-400">
+              {locale === "fr-CA" ? "FC max (BPM)" : "HRmax (BPM)"}
+              <input
+                type="number"
+                value={hrmax}
+                onChange={(e) => setHrmax(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-sm text-white"
+              />
+            </label>
+            <label className="text-xs text-zinc-400">
+              {locale === "fr-CA" ? "Poids (kg)" : "Weight (kg)"}
+              <input
+                type="number"
+                step="0.1"
+                value={weight}
+                onChange={(e) => setWeight(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-sm text-white"
+              />
+            </label>
+          </div>
+          <button
+            type="submit"
+            className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-bold text-zinc-950 hover:bg-orange-400"
           >
-            <h2 className="text-lg font-bold text-white">{t("settings.thresholds_title")}</h2>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="text-xs text-zinc-400">
-                {locale === "fr-CA" ? "FTP vélo (Watts, optionnel)" : "FTP (Watts, optional)"}
-                <input
-                  type="number"
-                  value={ftp}
-                  onChange={(e) => setFtp(e.target.value)}
-                  placeholder="250"
-                  className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-sm text-white"
-                />
-              </label>
-              <label className="text-xs text-zinc-400">
-                {locale === "fr-CA" ? "Allure seuil course (sec/km)" : "Run Threshold Pace (sec/km)"}
-                <input
-                  type="number"
-                  value={thresholdPace}
-                  onChange={(e) => setThresholdPace(e.target.value)}
-                  placeholder="270 (4:30/km)"
-                  className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-sm text-white"
-                />
-              </label>
-              <label className="text-xs text-zinc-400">
-                {locale === "fr-CA" ? "FC seuil (BPM)" : "LTHR (BPM)"}
-                <input
-                  type="number"
-                  value={lthr}
-                  onChange={(e) => setLthr(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-sm text-white"
-                />
-              </label>
-              <label className="text-xs text-zinc-400">
-                {locale === "fr-CA" ? "FC max (BPM)" : "HRmax (BPM)"}
-                <input
-                  type="number"
-                  value={hrmax}
-                  onChange={(e) => setHrmax(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-sm text-white"
-                />
-              </label>
-              <label className="text-xs text-zinc-400">
-                {locale === "fr-CA" ? "Poids (kg)" : "Weight (kg)"}
-                <input
-                  type="number"
-                  step="0.1"
-                  value={weight}
-                  onChange={(e) => setWeight(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-sm text-white"
-                />
-              </label>
-            </div>
-            <button
-              type="submit"
-              className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-bold text-zinc-950 hover:bg-orange-400"
-            >
-              {t("settings.save_thresholds")}
-            </button>
-          </form>
-        </div>
+            {t("settings.save_thresholds")}
+          </button>
+        </form>
       </div>
 
       {/* Remote MCP & Personal Tokens */}

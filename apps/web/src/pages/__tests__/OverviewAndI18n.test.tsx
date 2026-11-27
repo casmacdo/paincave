@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { I18nProvider } from "../../lib/i18n.js";
 import { ThemeProvider } from "../../lib/theme.js";
 import { api } from "../../lib/api.js";
+import { TrainerMenu } from "../../components/TrainerMenu.js";
 import { OverviewPage } from "../OverviewPage.js";
 import { SettingsPage } from "../SettingsPage.js";
 
@@ -13,7 +14,7 @@ afterEach(() => {
   document.documentElement.classList.remove("dark");
 });
 
-describe("OverviewPage, Quebec French i18n, Light Mode, and clean Settings UX", () => {
+describe("OverviewPage, persistent Trainer dropdown, Quebec French i18n, Light Mode, and clean Settings UX", () => {
   it("renders Overview in Quebec French by default, defaults to Light Mode, and avoids internal jargon", async () => {
     vi.spyOn(api, "getFitnessOverview").mockResolvedValue({
       current_pmc: { day: "2026-11-27", ctl: 48, atl: 52, tsb: -4, ramp_rate_7d: 2.1 },
@@ -70,11 +71,7 @@ describe("OverviewPage, Quebec French i18n, Light Mode, and clean Settings UX", 
     const { container } = render(
       <ThemeProvider>
         <I18nProvider defaultLocale="fr-CA">
-          <OverviewPage
-            indoorTrainerEnabled={true}
-            onOpenTrainer={vi.fn()}
-            onNavigateTab={vi.fn()}
-          />
+          <OverviewPage onNavigateTab={vi.fn()} />
         </I18nProvider>
       </ThemeProvider>
     );
@@ -82,12 +79,50 @@ describe("OverviewPage, Quebec French i18n, Light Mode, and clean Settings UX", 
     expect(await screen.findByText("Aperçu santé et entraînement")).toBeTruthy();
     expect(screen.getByText("Mémoire IA")).toBeTruthy();
     expect(screen.getByText("Mollet gauche sensible en côte")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /PainCave : Base d'entraînement/i })).toBeTruthy();
     expect(document.documentElement.classList.contains("dark")).toBe(false);
     expect(container.textContent?.toLowerCase()).not.toContain("hub");
   });
 
-  it("exposes Garmin historical date-range import in Quebec French without leaking internal env vars", async () => {
+  it("opens the persistent Trainer dropdown menu and navigates directly to Live Ride, Routes, or Bridge", () => {
+    const onSelect = vi.fn();
+    render(
+      <ThemeProvider>
+        <I18nProvider defaultLocale="fr-CA">
+          <TrainerMenu
+            active={false}
+            activeSubTab="ride"
+            bridgeConnected={true}
+            onSelect={onSelect}
+          />
+        </I18nProvider>
+      </ThemeProvider>
+    );
+
+    const trigger = screen.getByRole("button", { name: /Base d'entraînement/i });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    // Open dropdown
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("menu", { name: /PainCave : Base d'entraînement/i })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /Séance en direct/i })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /Parcours/i })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /Passerelle/i })).toBeTruthy();
+
+    // Clicking Routes navigates and closes the menu
+    fireEvent.click(screen.getByRole("menuitem", { name: /Parcours/i }));
+    expect(onSelect).toHaveBeenCalledWith("routes");
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    // Reopen and close with Escape
+    fireEvent.click(trigger);
+    expect(screen.getByRole("menu")).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("exposes Garmin historical date-range import in Quebec French without leaking internal env vars or optional trainer toggle", async () => {
     vi.spyOn(api, "getGarminStatus").mockResolvedValue({
       connected: true,
       last_sync_at: "2026-11-27T12:00:00Z",
@@ -132,13 +167,14 @@ describe("OverviewPage, Quebec French i18n, Light Mode, and clean Settings UX", 
     );
 
     expect(await screen.findByText("Importer l'historique Garmin (plage de dates)")).toBeTruthy();
-    // Ensure zero developer env vars leak into user-facing Settings UI
+    // Ensure zero developer env vars or optional trainer toggle leak into Settings UI
     const pageText = container.textContent ?? "";
     expect(pageText).not.toContain("STRAVA_CLIENT_ID");
     expect(pageText).not.toContain("ALLOWED_OWNER_EMAIL");
     expect(pageText).not.toContain("GOOGLE_CLIENT_ID");
     expect(pageText).not.toContain("MCP_BEARER_TOKEN");
     expect(pageText).not.toContain("Better Auth");
+    expect(pageText).not.toContain("Activer PainCave : Base d'entraînement");
 
     // Set a 7-day range and trigger import
     fireEvent.change(screen.getByLabelText("Du"), { target: { value: "2026-11-20" } });
