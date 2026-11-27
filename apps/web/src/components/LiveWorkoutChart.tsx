@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type uPlot from "uplot";
 import type { FlattenedStep } from "@paincave/shared";
-import { useTheme } from "../lib/theme.js";
 
 export interface LiveDataPoint {
   t_s: number;
@@ -261,7 +260,6 @@ export function LiveWorkoutChart({
   liveHistory,
   elapsedS,
 }: LiveWorkoutChartProps) {
-  const { theme } = useTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const plotRef = useRef<uPlot | null>(null);
 
@@ -273,12 +271,11 @@ export function LiveWorkoutChart({
 
     let cancelled = false;
     let onResize: (() => void) | null = null;
-    const isDark = theme === "dark";
-    const axisStroke = isDark ? "#9e9487" : "#5c5449";
-    const gridStroke = isDark ? "#2d2823" : "#dfd8ca";
-    const powerStroke = isDark ? "#52a67d" : "#2d6a4f";
-    const hrStroke = isDark ? "#df6e6e" : "#a63d3d";
-    const targetStroke = isDark ? "#787065" : "#8c8273";
+    const axisStroke = "#5c5449";
+    const gridStroke = "#dfd8ca";
+    const powerStroke = "#2d6a4f";
+    const hrStroke = "#a63d3d";
+    const targetStroke = "#8c8273";
 
     void import("uplot")
       .then(({ default: UPlotCtor }) => {
@@ -347,7 +344,7 @@ export function LiveWorkoutChart({
         plotRef.current = null;
       }
     };
-  }, [theme]);
+  }, []);
 
   useEffect(() => {
     const plot = plotRef.current;

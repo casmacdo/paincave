@@ -2,7 +2,6 @@ import { useState, type FormEvent } from "react";
 import { api, type AuthState } from "../lib/api.js";
 import { authClient } from "../lib/auth-client.js";
 import { useI18n } from "../lib/i18n.js";
-import { useTheme } from "../lib/theme.js";
 
 interface AuthScreenProps {
   authState: AuthState;
@@ -33,7 +32,6 @@ function getInitialAuthError(): string | null {
 
 export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
   const { locale, setLocale, t } = useI18n();
-  const { theme, toggleTheme } = useTheme();
   const providers = authState.providers ?? {
     email_password: true,
     passkey: true,
@@ -177,14 +175,6 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
                   EN
                 </button>
               </div>
-              <button
-                type="button"
-                onClick={toggleTheme}
-                title={t("theme.toggle_title")}
-                className="rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] font-semibold text-zinc-300"
-              >
-                {theme === "light" ? "☀" : "☾"}
-              </button>
             </div>
           </div>
           <div className="flex items-center justify-between gap-2">

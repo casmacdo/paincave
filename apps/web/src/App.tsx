@@ -8,7 +8,7 @@ import {
 } from "./lib/bridge-client.js";
 import { VersionAutoReloader } from "./lib/auto-update.js";
 import { I18nProvider, useI18n } from "./lib/i18n.js";
-import { ThemeProvider, useTheme } from "./lib/theme.js";
+import { ThemeProvider } from "./lib/theme.js";
 import { AuthScreen } from "./components/AuthScreen.js";
 import { PasskeyPromptBanner } from "./components/PasskeyPromptBanner.js";
 import { TrainerMenu } from "./components/TrainerMenu.js";
@@ -25,7 +25,6 @@ type CoreTabKey = "overview" | "calendar" | "workouts" | "trends" | "settings" |
 
 function AppShell() {
   const { locale, setLocale, t } = useI18n();
-  const { theme, toggleTheme } = useTheme();
   const [tab, setTab] = useState<CoreTabKey>("overview");
   const [trainerSubTab, setTrainerSubTab] = useState<TrainerSubTab>("ride");
   const [authChecked, setAuthChecked] = useState(false);
@@ -236,15 +235,6 @@ function AppShell() {
                 EN
               </button>
             </div>
-
-            <button
-              type="button"
-              onClick={toggleTheme}
-              title={t("theme.toggle_title")}
-              className="rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-[11px] font-semibold text-zinc-300 hover:bg-zinc-800"
-            >
-              {theme === "light" ? `☀ ${t("theme.light")}` : `☾ ${t("theme.dark")}`}
-            </button>
 
             {authState.user && (
               <span className="hidden rounded-full border border-zinc-800 bg-zinc-950 px-2.5 py-1 text-zinc-300 sm:inline">
