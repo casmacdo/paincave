@@ -42,7 +42,7 @@ describe("Worker Authentication & Athlete API", () => {
     // Direct fail-closed check with missing signing secret
     const res = await exports.default.fetch("https://paincave.test/api/auth/me");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ authenticated: false, configured: true });
+    expect(await res.json()).toMatchObject({ authenticated: false, configured: true });
 
     // Confirm raw env still has configured secret
     expect(env.SESSION_SIGNING_SECRET).toBeTruthy();

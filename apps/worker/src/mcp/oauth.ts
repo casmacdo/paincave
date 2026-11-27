@@ -8,6 +8,7 @@ import {
   timingSafeCompare,
   verifyPasswordPbkdf2,
 } from "../lib/auth.js";
+import { getBetterAuthSessionUser, resolveBetterAuthSecret } from "../lib/better-auth.js";
 
 const AUTH_CODE_TTL_S = 300; // 5 minutes
 const ACCESS_TOKEN_TTL_S = 3600; // 1 hour
@@ -59,11 +60,30 @@ function renderAuthorizePage(params: {
   codeChallenge: string;
   codeChallengeMethod: string;
   scope: string;
+  signedInEmail?: string | null;
+  hasLegacyPassword?: boolean;
+  returnToUrl?: string;
   error?: string;
 }): string {
   const errHtml = params.error
     ? `<p style="color:#f87171;background:#450a0a;padding:10px 12px;border-radius:8px;margin-bottom:16px;">${escapeHtml(params.error)}</p>`
     : "";
+
+  const authBlock = params.signedInEmail
+    ? `<p style="color:#86efac;background:#052e16;border:1px solid #166534;padding:10px 12px;border-radius:10px;margin:14px 0;">Signed in as <strong>${escapeHtml(params.signedInEmail)}</strong></p>
+       <input type="hidden" name="session_approve" value="1" />
+       <button type="submit">Approve Access</button>`
+    : `${
+        params.returnToUrl
+          ? `<a href="/?returnTo=${encodeURIComponent(params.returnToUrl)}" style="display:block;text-align:center;text-decoration:none;margin:16px 0 8px;padding:12px;border-radius:10px;background:#f97316;color:#09090b;font-weight:700;font-size:0.95rem;">Sign In with PainCave (Google / Passkey / Email)</a>`
+          : ""
+      }${
+        params.hasLegacyPassword
+          ? `<label for="password">Or approve with Admin Password</label>
+             <input id="password" name="password" type="password" autocomplete="current-password" required />
+             <button type="submit" style="background:#27272a;color:#f4f4f5;border:1px solid #3f3f46;">Approve with Password</button>`
+          : ""
+      }`;
 
   return `<!doctype html>
 <html lang="en">
@@ -73,12 +93,12 @@ function renderAuthorizePage(params: {
   <title>Authorize PainCave MCP</title>
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; background:#09090b; color:#f4f4f5; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; padding:16px; }
-    .card { width:100%; max-width:400px; background:#18181b; border:1px solid #27272a; border-radius:16px; padding:24px; box-sizing:border-box; }
+    .card { width:100%; max-width:420px; background:#18181b; border:1px solid #27272a; border-radius:16px; padding:24px; box-sizing:border-box; }
     h1 { font-size:1.25rem; margin:0 0 8px; }
     p { font-size:0.9rem; color:#a1a1aa; line-height:1.4; }
     label { display:block; font-size:0.85rem; margin:16px 0 6px; color:#d4d4d8; }
     input[type=password] { width:100%; box-sizing:border-box; padding:12px; border-radius:10px; border:1px solid #3f3f46; background:#09090b; color:#fff; font-size:1rem; }
-    button { width:100%; margin-top:16px; padding:12px; border:0; border-radius:10px; background:#f97316; color:#09090b; font-weight:700; font-size:1rem; cursor:pointer; }
+    button { width:100%; margin-top:14px; padding:12px; border:0; border-radius:10px; background:#f97316; color:#09090b; font-weight:700; font-size:1rem; cursor:pointer; }
   </style>
 </head>
 <body>
@@ -93,9 +113,7 @@ function renderAuthorizePage(params: {
       <input type="hidden" name="code_challenge" value="${escapeHtml(params.codeChallenge)}" />
       <input type="hidden" name="code_challenge_method" value="${escapeHtml(params.codeChallengeMethod)}" />
       <input type="hidden" name="scope" value="${escapeHtml(params.scope)}" />
-      <label for="password">PainCave Admin Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
-      <button type="submit">Approve Access</button>
+      ${authBlock}
     </form>
   </div>
 </body>
@@ -141,7 +159,7 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
 
   // RFC 7591 Dynamic Client Registration (for Claude Mobile / ChatGPT Mobile)
   router.post("/oauth/register", async (c) => {
-    if (!c.env.UI_ADMIN_PASSWORD_HASH) {
+    if (!c.env.UI_ADMIN_PASSWORD_HASH && !resolveBetterAuthSecret(c.env)) {
       return c.json({ error: "server_error", error_description: "OAuth not configured" }, 503);
     }
 
@@ -185,7 +203,7 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
   });
 
   router.get("/oauth/authorize", async (c) => {
-    if (!c.env.UI_ADMIN_PASSWORD_HASH) {
+    if (!c.env.UI_ADMIN_PASSWORD_HASH && !resolveBetterAuthSecret(c.env)) {
       return c.text("Authentication not configured", 503);
     }
 
@@ -215,6 +233,10 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
       return c.json({ error: "invalid_request", error_description: "Unregistered redirect_uri" }, 400);
     }
 
+    const sessionUser = await getBetterAuthSessionUser(c.env, c.req.raw);
+    const reqUrl = new URL(c.req.url);
+    const returnToUrl = `${reqUrl.pathname}${reqUrl.search}`;
+
     return c.html(
       renderAuthorizePage({
         clientName: client.client_name,
@@ -224,13 +246,16 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
         codeChallenge,
         codeChallengeMethod,
         scope,
+        signedInEmail: sessionUser?.email ?? null,
+        hasLegacyPassword: Boolean(c.env.UI_ADMIN_PASSWORD_HASH),
+        returnToUrl,
       })
     );
   });
 
   router.post("/oauth/authorize", async (c) => {
     const expectedHash = c.env.UI_ADMIN_PASSWORD_HASH;
-    if (!expectedHash) {
+    if (!expectedHash && !resolveBetterAuthSecret(c.env)) {
       return c.json({ error: "server_error" }, 503);
     }
 
@@ -258,8 +283,11 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
       return c.json({ error: "invalid_request" }, 400);
     }
 
-    const passwordValid = await verifyPasswordPbkdf2(password, expectedHash);
-    if (!passwordValid) {
+    const sessionUser = await getBetterAuthSessionUser(c.env, c.req.raw);
+    const passwordValid =
+      expectedHash && password ? await verifyPasswordPbkdf2(password, expectedHash) : false;
+
+    if (!sessionUser && !passwordValid) {
       return c.html(
         renderAuthorizePage({
           clientName: client.client_name,
@@ -269,7 +297,9 @@ export function createMcpOAuthRoutes(): Hono<HonoAppContext> {
           codeChallenge,
           codeChallengeMethod,
           scope,
-          error: "Invalid password. Please try again.",
+          signedInEmail: null,
+          hasLegacyPassword: Boolean(expectedHash),
+          error: "Invalid credentials. Please sign in or check your admin password.",
         }),
         401
       );

@@ -1,5 +1,10 @@
 import type { Context, Next } from "hono";
 import type { AppEnv, HonoAppContext } from "../types.js";
+import {
+  getBetterAuthSessionUser,
+  resolveBetterAuthSecret,
+  type BetterAuthUserSummary,
+} from "./better-auth.js";
 
 export const SESSION_COOKIE_NAME = "paincave_session";
 const SESSION_TTL_S = 30 * 24 * 60 * 60; // 30 days
@@ -193,34 +198,53 @@ export function clearUiSessionCookie(requestUrl: string): string {
 
 export async function verifyUiSessionRequest(
   c: Context<HonoAppContext>
-): Promise<{ ok: true } | { ok: false; status: 401 | 503; error: string }> {
+): Promise<
+  | { ok: true; authMode: "better_auth" | "legacy_password"; user: BetterAuthUserSummary | null }
+  | { ok: false; status: 401 | 503; error: string }
+> {
+  const hasBetterAuth = resolveBetterAuthSecret(c.env) !== null;
   const signingSecret = c.env.SESSION_SIGNING_SECRET;
-  if (!signingSecret || signingSecret.length < 16 || !c.env.UI_ADMIN_PASSWORD_HASH) {
+  const hasLegacy = Boolean(
+    signingSecret && signingSecret.length >= 16 && c.env.UI_ADMIN_PASSWORD_HASH
+  );
+
+  if (!hasBetterAuth && !hasLegacy) {
     return { ok: false, status: 503, error: "Authentication secrets are not configured" };
   }
 
-  const cookieVal = parseCookie(c.req.header("Cookie"), SESSION_COOKIE_NAME);
-  if (!cookieVal) {
-    return { ok: false, status: 401, error: "Authentication required" };
+  // 1. Prefer Better Auth session if cookie is present
+  if (hasBetterAuth) {
+    const baUser = await getBetterAuthSessionUser(c.env, c.req.raw);
+    if (baUser) {
+      return { ok: true, authMode: "better_auth", user: baUser };
+    }
   }
 
-  const rawToken = await verifySignedValue(cookieVal, signingSecret);
-  if (!rawToken) {
-    return { ok: false, status: 401, error: "Invalid session" };
+  // 2. Fallback to legacy signed paincave_session cookie
+  if (hasLegacy && signingSecret) {
+    const cookieVal = parseCookie(c.req.header("Cookie"), SESSION_COOKIE_NAME);
+    if (cookieVal) {
+      const rawToken = await verifySignedValue(cookieVal, signingSecret);
+      if (!rawToken) {
+        return { ok: false, status: 401, error: "Invalid session" };
+      }
+
+      const tokenHash = await sha256Hex(rawToken);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const row = await c.env.DB.prepare(
+        "SELECT token_hash FROM ui_sessions WHERE token_hash = ? AND expires_at > ?"
+      )
+        .bind(tokenHash, nowSec)
+        .first<{ token_hash: string }>();
+
+      if (row) {
+        return { ok: true, authMode: "legacy_password", user: null };
+      }
+      return { ok: false, status: 401, error: "Session expired or revoked" };
+    }
   }
 
-  const tokenHash = await sha256Hex(rawToken);
-  const nowSec = Math.floor(Date.now() / 1000);
-  const row = await c.env.DB.prepare(
-    "SELECT token_hash FROM ui_sessions WHERE token_hash = ? AND expires_at > ?"
-  )
-    .bind(tokenHash, nowSec)
-    .first<{ token_hash: string }>();
-
-  if (!row) {
-    return { ok: false, status: 401, error: "Session expired or revoked" };
-  }
-  return { ok: true };
+  return { ok: false, status: 401, error: "Authentication required" };
 }
 
 export async function requireUiAuth(
@@ -267,7 +291,7 @@ export async function verifyMcpAuth(
   env: AppEnv
 ): Promise<{ ok: true; method: "bearer" | "oauth" } | { ok: false; status: 401 | 503; error: string }> {
   const hasBearer = Boolean(env.MCP_BEARER_TOKEN && env.MCP_BEARER_TOKEN.length >= 16);
-  const hasOAuth = Boolean(env.UI_ADMIN_PASSWORD_HASH);
+  const hasOAuth = Boolean(env.UI_ADMIN_PASSWORD_HASH || resolveBetterAuthSecret(env));
   if (!hasBearer && !hasOAuth) {
     return { ok: false, status: 503, error: "MCP authentication is not configured" };
   }

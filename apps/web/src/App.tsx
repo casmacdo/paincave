@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BridgeCommand, RoutePayload } from "@paincave/shared";
-import { api, type AthleteThreshold } from "./lib/api.js";
+import { api, type AthleteThreshold, type AuthState } from "./lib/api.js";
 import {
   BridgeClient,
   DEFAULT_BRIDGE_WS_URL,
   type BridgeClientSnapshot,
 } from "./lib/bridge-client.js";
 import { VersionAutoReloader } from "./lib/auto-update.js";
+import { AuthScreen } from "./components/AuthScreen.js";
 import { RidePage } from "./pages/RidePage.js";
 import { CalendarPage } from "./pages/CalendarPage.js";
 import { WorkoutsPage } from "./pages/WorkoutsPage.js";
@@ -21,9 +22,10 @@ type TabKey = "ride" | "calendar" | "workouts" | "routes" | "analytics" | "setti
 export function App() {
   const [tab, setTab] = useState<TabKey>("ride");
   const [authChecked, setAuthChecked] = useState(false);
-  const [authenticated, setAuthenticated] = useState(false);
-  const [password, setPassword] = useState("");
-  const [loginError, setLoginError] = useState<string | null>(null);
+  const [authState, setAuthState] = useState<AuthState>({
+    authenticated: false,
+    configured: true,
+  });
   const [thresholds, setThresholds] = useState<AthleteThreshold | null>(null);
   const [bridgeUrl, setBridgeUrl] = useState(() => {
     if (typeof window !== "undefined") {
@@ -58,37 +60,32 @@ export function App() {
     return () => reloader.stop();
   }, [bridgeClient]);
 
-  const refreshProfile = async () => {
+  const refreshProfile = useCallback(async () => {
     const prof = await api.getProfile();
     setThresholds(prof.latest_thresholds);
-  };
-
-  useEffect(() => {
-    api
-      .getMe()
-      .then((res) => {
-        setAuthenticated(res.authenticated);
-        if (res.authenticated) {
-          void refreshProfile();
-        }
-      })
-      .catch(() => {
-        setAuthenticated(false);
-      })
-      .finally(() => setAuthChecked(true));
   }, []);
 
-  const handleLogin = async (e: FormEvent) => {
-    e.preventDefault();
-    setLoginError(null);
+  const refreshAuthState = useCallback(async () => {
     try {
-      await api.login(password);
-      setAuthenticated(true);
-      setPassword("");
-      await refreshProfile();
-    } catch (err) {
-      setLoginError(err instanceof Error ? err.message : "Login failed");
+      const res = await api.getMe();
+      setAuthState(res);
+      if (res.authenticated) {
+        await refreshProfile();
+      }
+    } catch {
+      setAuthState({ authenticated: false, configured: true });
+    } finally {
+      setAuthChecked(true);
     }
+  }, [refreshProfile]);
+
+  useEffect(() => {
+    void refreshAuthState();
+  }, [refreshAuthState]);
+
+  const handleSignOut = async () => {
+    await api.logout().catch(() => {});
+    await refreshAuthState();
   };
 
   const handleLoadWorkoutOnTrainer = async (
@@ -140,37 +137,8 @@ export function App() {
     );
   }
 
-  if (!authenticated) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-4">
-        <form
-          onSubmit={(e) => void handleLogin(e)}
-          className="w-full max-w-sm space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900 p-6"
-        >
-          <h1 className="text-2xl font-black tracking-tight text-white">
-            Pain<span className="text-orange-500">Cave</span>
-          </h1>
-          <p className="text-sm text-zinc-400">Sign in to manage workouts and trainer rides.</p>
-          {loginError && (
-            <div className="rounded-lg bg-rose-500/15 p-2.5 text-xs text-rose-300">{loginError}</div>
-          )}
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Admin Password"
-            required
-            className="w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-sm text-white"
-          />
-          <button
-            type="submit"
-            className="w-full rounded-xl bg-orange-500 py-3 text-sm font-bold text-zinc-950 hover:bg-orange-400"
-          >
-            Sign In
-          </button>
-        </form>
-      </div>
-    );
+  if (!authState.authenticated) {
+    return <AuthScreen authState={authState} onAuthenticated={refreshAuthState} />;
   }
 
   const ftpWatts = thresholds?.ftp_watts ?? 250;
@@ -226,6 +194,11 @@ export function App() {
               {bridgeSnapshot.connected ? "Bridge Connected" : "Bridge Offline"}
             </span>
             <span className="text-zinc-400">FTP {ftpWatts}W</span>
+            {authState.user && (
+              <span className="hidden rounded-full border border-zinc-800 bg-zinc-950 px-2.5 py-1 text-zinc-300 sm:inline">
+                {authState.user.name}
+              </span>
+            )}
           </div>
         </div>
       </header>
@@ -258,6 +231,8 @@ export function App() {
             bridgeSnapshot={bridgeSnapshot}
             latestThresholds={thresholds}
             onThresholdsUpdated={refreshProfile}
+            authState={authState}
+            onSignOut={handleSignOut}
           />
         )}
       </main>

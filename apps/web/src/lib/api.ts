@@ -1,8 +1,29 @@
 import type { FlattenedStep, RideUploadSummary, RoutePoint, WorkoutSpec } from "@paincave/shared";
 
+export interface AuthProvidersInfo {
+  email_password: boolean;
+  passkey: boolean;
+  google: boolean;
+  github: boolean;
+  apple: boolean;
+  legacy_password: boolean;
+}
+
+export interface AuthUserSummary {
+  id: string;
+  name: string;
+  email: string;
+  image: string | null;
+}
+
 export interface AuthState {
   authenticated: boolean;
   configured: boolean;
+  auth_mode?: "better_auth" | "legacy_password" | null;
+  user?: AuthUserSummary | null;
+  has_owner?: boolean;
+  owner_email_restricted?: boolean;
+  providers?: AuthProvidersInfo;
 }
 
 export interface AthleteProfile {

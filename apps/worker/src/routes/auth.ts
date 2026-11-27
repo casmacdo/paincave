@@ -10,6 +10,14 @@ import {
   verifyPasswordPbkdf2,
   verifyUiSessionRequest,
 } from "../lib/auth.js";
+import {
+  createBetterAuth,
+  getConfiguredProviders,
+  hasBetterAuthSessionCookie,
+  hasRegisteredOwner,
+  parseAllowedOwnerEmails,
+  resolveBetterAuthSecret,
+} from "../lib/better-auth.js";
 
 const LoginBodySchema = z.object({
   password: z.string().min(1).max(256),
@@ -42,26 +50,89 @@ export function createAuthRoutes(): Hono<HonoAppContext> {
   });
 
   router.post("/logout", async (c) => {
-    const cookieVal = parseCookie(c.req.header("Cookie"), SESSION_COOKIE_NAME);
+    const cookieHeader = c.req.header("Cookie");
+    const cookieVal = parseCookie(cookieHeader, SESSION_COOKIE_NAME);
     if (cookieVal) {
       const dot = cookieVal.indexOf(".");
       const rawToken = dot > 0 ? cookieVal.slice(0, dot) : cookieVal;
       const tokenHash = await sha256Hex(rawToken);
       await c.env.DB.prepare("DELETE FROM ui_sessions WHERE token_hash = ?").bind(tokenHash).run();
     }
-    c.header("Set-Cookie", clearUiSessionCookie(c.req.url));
-    return c.json({ ok: true });
+
+    const headers = new Headers({ "Content-Type": "application/json" });
+    headers.append("Set-Cookie", clearUiSessionCookie(c.req.url));
+
+    if (resolveBetterAuthSecret(c.env) && hasBetterAuthSessionCookie(cookieHeader)) {
+      try {
+        const auth = createBetterAuth(c.env, c.req.url);
+        const signOutUrl = new URL("/api/auth/sign-out", c.req.url);
+        const baRes = await auth.handler(
+          new Request(signOutUrl.toString(), {
+            method: "POST",
+            headers: {
+              Cookie: cookieHeader ?? "",
+              Origin: new URL(c.req.url).origin,
+              "Content-Type": "application/json",
+            },
+            body: "{}",
+          })
+        );
+        const setCookies =
+          typeof baRes.headers.getSetCookie === "function"
+            ? baRes.headers.getSetCookie()
+            : [baRes.headers.get("Set-Cookie")].filter((v): v is string => Boolean(v));
+        for (const cookie of setCookies) {
+          headers.append("Set-Cookie", cookie);
+        }
+      } catch {
+        // Ignore Better Auth sign-out errors during fallback logout
+      }
+    }
+
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
   });
 
   router.get("/me", async (c) => {
-    const check = await verifyUiSessionRequest(c);
+    const [check, hasOwner] = await Promise.all([
+      verifyUiSessionRequest(c),
+      hasRegisteredOwner(c.env.DB),
+    ]);
+    const providers = getConfiguredProviders(c.env);
+    const ownerEmailRestricted = parseAllowedOwnerEmails(c.env.ALLOWED_OWNER_EMAIL).length > 0;
+
     if (!check.ok) {
-      if (check.status === 503) {
-        return c.json({ authenticated: false, configured: false }, 200);
-      }
-      return c.json({ authenticated: false, configured: true }, 200);
+      return c.json(
+        {
+          authenticated: false,
+          configured: check.status !== 503,
+          auth_mode: null,
+          user: null,
+          has_owner: hasOwner,
+          owner_email_restricted: ownerEmailRestricted,
+          providers,
+        },
+        200
+      );
     }
-    return c.json({ authenticated: true, configured: true });
+
+    return c.json({
+      authenticated: true,
+      configured: true,
+      auth_mode: check.authMode,
+      user: check.user,
+      has_owner: hasOwner,
+      owner_email_restricted: ownerEmailRestricted,
+      providers,
+    });
+  });
+
+  // Mount Better Auth endpoints: /api/auth/sign-up/*, /api/auth/sign-in/*, /api/auth/callback/*, /api/auth/passkey/*, etc.
+  router.all("/*", async (c) => {
+    if (!resolveBetterAuthSecret(c.env)) {
+      return c.json({ error: "Better Auth secret is not configured" }, 503);
+    }
+    const auth = createBetterAuth(c.env, c.req.url);
+    return auth.handler(c.req.raw);
   });
 
   return router;

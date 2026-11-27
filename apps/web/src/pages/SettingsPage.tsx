@@ -1,6 +1,15 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { api, type AthleteThreshold } from "../lib/api.js";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { api, type AthleteThreshold, type AuthState } from "../lib/api.js";
+import { authClient } from "../lib/auth-client.js";
 import type { BridgeClientSnapshot } from "../lib/bridge-client.js";
+
+interface PasskeyRecord {
+  id: string;
+  name?: string | null;
+  deviceType: string;
+  backedUp: boolean;
+  createdAt?: string | Date | null;
+}
 
 interface SettingsPageProps {
   bridgeUrl: string;
@@ -8,6 +17,8 @@ interface SettingsPageProps {
   bridgeSnapshot: BridgeClientSnapshot;
   latestThresholds: AthleteThreshold | null;
   onThresholdsUpdated: () => Promise<void>;
+  authState?: AuthState;
+  onSignOut?: () => Promise<void>;
 }
 
 export function SettingsPage({
@@ -16,6 +27,8 @@ export function SettingsPage({
   bridgeSnapshot,
   latestThresholds,
   onThresholdsUpdated,
+  authState,
+  onSignOut,
 }: SettingsPageProps) {
   const [ftp, setFtp] = useState(String(latestThresholds?.ftp_watts ?? 250));
   const [lthr, setLthr] = useState(String(latestThresholds?.lthr_bpm ?? 170));
@@ -28,13 +41,76 @@ export function SettingsPage({
     athlete_external_id: string | null;
   }>({ configured: false, connected: false, athlete_external_id: null });
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [authErr, setAuthErr] = useState<string | null>(null);
+  const [passkeys, setPasskeys] = useState<PasskeyRecord[]>([]);
+  const [passkeyName, setPasskeyName] = useState("");
+  const [addingPasskey, setAddingPasskey] = useState(false);
+
+  const isBetterAuth = authState?.auth_mode === "better_auth";
+  const providers = authState?.providers;
+
+  const loadPasskeys = useCallback(async () => {
+    if (!isBetterAuth) {
+      setPasskeys([]);
+      return;
+    }
+    try {
+      const res = await authClient.passkey.listUserPasskeys();
+      if (Array.isArray(res.data)) {
+        setPasskeys(res.data);
+      }
+    } catch {
+      // Ignore passkey list failure in non-WebAuthn contexts
+    }
+  }, [isBetterAuth]);
 
   useEffect(() => {
     void api.getStravaStatus().then(setStrava);
   }, []);
 
-  const mcpUrl =
-    typeof window !== "undefined" ? `${window.location.origin}/mcp` : "https://your-worker.workers.dev/mcp";
+  useEffect(() => {
+    void loadPasskeys();
+  }, [loadPasskeys]);
+
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : "https://your-worker.workers.dev";
+  const mcpUrl = `${origin}/mcp`;
+
+  const handleAddPasskey = async () => {
+    setAddingPasskey(true);
+    setAuthErr(null);
+    setSavedMsg(null);
+    try {
+      const res = await authClient.passkey.addPasskey({
+        name: passkeyName.trim() || "PainCave Device",
+      });
+      if (res?.error) {
+        setAuthErr(res.error.message ?? "Could not register passkey");
+      } else {
+        setPasskeyName("");
+        setSavedMsg("Registered new passkey.");
+        await loadPasskeys();
+      }
+    } catch (err) {
+      setAuthErr(err instanceof Error ? err.message : "Passkey registration cancelled");
+    } finally {
+      setAddingPasskey(false);
+    }
+  };
+
+  const handleDeletePasskey = async (id: string) => {
+    setAuthErr(null);
+    try {
+      const res = await authClient.passkey.deletePasskey({ id });
+      if (res?.error) {
+        setAuthErr(res.error.message ?? "Could not delete passkey");
+      } else {
+        setPasskeys((prev) => prev.filter((p) => p.id !== id));
+      }
+    } catch (err) {
+      setAuthErr(err instanceof Error ? err.message : "Failed to delete passkey");
+    }
+  };
 
   const handleSaveThresholds = async (e: FormEvent) => {
     e.preventDefault();
@@ -161,12 +237,160 @@ export function SettingsPage({
         </div>
       </div>
 
+      <section className="space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-white">Account &amp; Security (Better Auth)</h2>
+            <p className="mt-0.5 text-xs text-zinc-400">
+              {isBetterAuth && authState?.user
+                ? `Signed in as ${authState.user.name} (${authState.user.email}) · Single-owner instance locked.`
+                : "Signed in via legacy admin password fallback."}
+              {authState?.owner_email_restricted && " Enforcing ALLOWED_OWNER_EMAIL."}
+            </p>
+          </div>
+          {onSignOut && (
+            <button
+              type="button"
+              onClick={() => void onSignOut()}
+              className="rounded-lg border border-zinc-700 bg-zinc-800 px-3.5 py-2 text-xs font-semibold text-zinc-200 hover:bg-zinc-700 hover:text-white"
+            >
+              Sign Out
+            </button>
+          )}
+        </div>
+
+        {authErr && (
+          <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-2.5 text-xs text-rose-200">
+            {authErr}
+          </div>
+        )}
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          {/* Passkeys */}
+          <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
+            <h3 className="text-sm font-bold text-white">Passkeys (Touch ID / Face ID / Security Key)</h3>
+            {isBetterAuth ? (
+              <>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={passkeyName}
+                    onChange={(e) => setPasskeyName(e.target.value)}
+                    placeholder="Device label (e.g. Linux Laptop)"
+                    className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs text-white placeholder:text-zinc-500"
+                  />
+                  <button
+                    type="button"
+                    disabled={addingPasskey}
+                    onClick={() => void handleAddPasskey()}
+                    className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:opacity-60"
+                  >
+                    {addingPasskey ? "Registering..." : "+ Add Passkey"}
+                  </button>
+                </div>
+                {passkeys.length === 0 ? (
+                  <p className="text-xs text-zinc-500">
+                    No passkeys registered yet. Add one for 1-tap basement &amp; mobile sign-in.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {passkeys.map((pk) => (
+                      <li
+                        key={pk.id}
+                        className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs"
+                      >
+                        <div>
+                          <div className="font-semibold text-zinc-100">{pk.name || "Passkey"}</div>
+                          <div className="text-[11px] text-zinc-500">
+                            {pk.deviceType} {pk.backedUp ? "· Synced" : "· Device-bound"}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeletePasskey(pk.id)}
+                          className="text-rose-400 hover:text-rose-300"
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-zinc-400">
+                Sign out and create or sign in with your Better Auth owner account to register passkeys.
+              </p>
+            )}
+          </div>
+
+          {/* OAuth Social Providers */}
+          <div className="space-y-2.5 rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
+            <h3 className="text-sm font-bold text-white">Social Sign-In Providers</h3>
+            <p className="text-[11px] text-zinc-400">
+              Set the Worker secrets below to enable OAuth buttons on the login screen (still locked to
+              your single owner account):
+            </p>
+            <div className="space-y-2 text-xs">
+              {(
+                [
+                  {
+                    id: "google",
+                    label: "Google",
+                    enabled: providers?.google ?? false,
+                    secrets: "GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET",
+                  },
+                  {
+                    id: "github",
+                    label: "GitHub",
+                    enabled: providers?.github ?? false,
+                    secrets: "GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET",
+                  },
+                  {
+                    id: "apple",
+                    label: "Apple",
+                    enabled: providers?.apple ?? false,
+                    secrets: "APPLE_CLIENT_ID, APPLE_CLIENT_SECRET",
+                  },
+                ] as const
+              ).map((p) => (
+                <div
+                  key={p.id}
+                  className="rounded-lg border border-zinc-800 bg-zinc-900 p-2.5"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-white">{p.label}</span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                        p.enabled
+                          ? "bg-emerald-500/20 text-emerald-300"
+                          : "bg-zinc-800 text-zinc-400"
+                      }`}
+                    >
+                      {p.enabled ? "Enabled" : "Not configured"}
+                    </span>
+                  </div>
+                  <div className="mt-1 font-mono text-[10px] text-zinc-400">
+                    Callback: {origin}/api/auth/callback/{p.id}
+                  </div>
+                  {!p.enabled && (
+                    <div className="mt-0.5 font-mono text-[10px] text-zinc-500">
+                      Secrets: {p.secrets}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
         <h2 className="text-lg font-bold text-white">Remote MCP — Planning &amp; Analysis (Mobile &amp; Desktop)</h2>
         <p className="mt-1 text-sm text-zinc-400">
           Add this URL as a Remote MCP connector for workout planning, ride analysis, and training
-          data access in Claude, ChatGPT, or Gemini (uses OAuth 2.1 + PKCE with your PainCave admin
-          password), or authenticate CLI clients using your <code>MCP_BEARER_TOKEN</code>.
+          data access in Claude, ChatGPT, or Gemini (uses OAuth 2.1 + PKCE — 1-click approval when
+          signed in with Better Auth), or authenticate CLI clients using your <code>MCP_BEARER_TOKEN</code>.
         </p>
         <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs text-orange-300">
           {mcpUrl}
