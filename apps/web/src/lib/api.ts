@@ -380,4 +380,77 @@ export const api = {
       connected: false,
       athlete_external_id: null,
     })),
+
+  getGarminStatus: () =>
+    requestJson<{
+      connected: boolean;
+      last_sync_at: string | null;
+      last_error: string | null;
+      token_expires_at: number | null;
+    }>("/api/garmin/status").catch(() => ({
+      connected: false,
+      last_sync_at: null,
+      last_error: null,
+      token_expires_at: null,
+    })),
+  connectGarmin: (apiKey: string) =>
+    requestJson<{
+      ok: boolean;
+      status: {
+        connected: boolean;
+        last_sync_at: string | null;
+        last_error: string | null;
+        token_expires_at: number | null;
+      };
+    }>("/api/garmin/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: apiKey }),
+    }),
+  syncGarminNow: (days = 7) =>
+    requestJson<{
+      ok: boolean;
+      rate_limited: boolean;
+      activities_imported: number;
+      activities_skipped: number;
+      biometrics_upserted: number;
+      error: string | null;
+    }>("/api/garmin/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ days }),
+    }),
+  disconnectGarmin: () =>
+    requestJson<{ ok: boolean }>("/api/garmin/disconnect", { method: "DELETE" }),
+
+  getBiometrics: (days = 30) =>
+    requestJson<{
+      days: number;
+      summary: {
+        latest: {
+          day: string;
+          hrv_rmssd_ms: number | null;
+          hrv_status: string | null;
+          resting_hr_bpm: number | null;
+          sleep_duration_s: number | null;
+          sleep_score: number | null;
+          body_battery_high: number | null;
+          weight_kg: number | null;
+        } | null;
+        hrv_7d_avg: number | null;
+        hrv_baseline_avg: number | null;
+        hrv_delta_pct: number | null;
+        resting_hr_7d_avg: number | null;
+        sleep_hours_7d_avg: number | null;
+        sleep_score_7d_avg: number | null;
+      };
+      biometrics: {
+        day: string;
+        hrv_rmssd_ms: number | null;
+        resting_hr_bpm: number | null;
+        sleep_duration_s: number | null;
+        sleep_score: number | null;
+        body_battery_high: number | null;
+      }[];
+    }>(`/api/fitness/biometrics?days=${days}`).catch(() => null),
 };

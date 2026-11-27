@@ -570,7 +570,7 @@
       "id": "M9-01",
       "milestone": "M9",
       "title": "Extend shared FIT parser for multi-sport activities/laps and implement running physiology engine (GAP, Pa:HR decoupling, rTSS/hrTSS, best efforts)",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M8-01"
       ],
@@ -585,13 +585,15 @@
         "Running physiology computes Grade Adjusted Pace (GAP), Pa:HR aerobic decoupling, rTSS with hrTSS fallback, and distance best efforts (400m/1k/5k/10k)",
         "Deterministic unit tests cover flat runs, hilly runs, interval track sessions, and missing-GPS treadmill runs"
       ],
-      "verify_cmd": "npm --workspace @paincave/shared run typecheck && npm --workspace @paincave/shared run test"
+      "verify_cmd": "npm --workspace @paincave/shared run typecheck && npm --workspace @paincave/shared run test",
+      "notes": "Extended FIT reader for multi-sport/laps and added running physiology engine (GAP, Pa:HR, rTSS/hrTSS, best efforts)",
+      "updated_at": "2026-11-27T17:39:02.391Z"
     },
     {
       "id": "M9-02",
       "milestone": "M9",
       "title": "Implement Garmin Connect Personal API client (ApiKey->24h JWT, chunked activity/.fit pull, daily HRV/sleep/RHR/Body Battery sync, encrypted key storage)",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M8-03",
         "M9-01"
@@ -608,13 +610,15 @@
         "Downloads raw .fit files to R2, parses activities + activity_laps + peaks idempotently, updates daily_pmc, and upserts daily_biometrics (HRV, sleep, RHR, Body Battery, stress, weight)",
         "Mocked Workers tests verify token caching, idempotent re-sync, 429 handling, and per-user data isolation"
       ],
-      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test",
+      "notes": "Implemented AES-GCM key encryption, Garmin Connect Personal API client, and idempotent FIT/biometrics sync",
+      "updated_at": "2026-11-27T17:45:38.949Z"
     },
     {
       "id": "M9-03",
       "milestone": "M9",
       "title": "Wire Cloudflare Worker hourly Cron Trigger and Settings/Dashboard UI for Garmin Personal API connection and daily readiness (HRV/sleep/RHR)",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M9-02"
       ],
@@ -631,7 +635,9 @@
         "Settings UI lets each user save their Garmin Personal API key, trigger Sync Now, and inspect last sync status",
         "Analytics UI displays recent HRV/sleep/resting HR readiness trends when daily_biometrics rows exist"
       ],
-      "verify_cmd": "./scripts/verify.sh --strict && npm --workspace @paincave/web run build"
+      "verify_cmd": "./scripts/verify.sh --strict && npm --workspace @paincave/web run build",
+      "notes": "Wired hourly Worker Cron Trigger, /api/garmin endpoints, /api/fitness/biometrics, and Settings/Analytics readiness UI",
+      "updated_at": "2026-11-27T17:48:18.470Z"
     },
     {
       "id": "M10-01",

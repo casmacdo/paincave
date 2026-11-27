@@ -46,6 +46,13 @@ export function SettingsPage({
     connected: boolean;
     athlete_external_id: string | null;
   }>({ configured: false, connected: false, athlete_external_id: null });
+  const [garmin, setGarmin] = useState<{
+    connected: boolean;
+    last_sync_at: string | null;
+    last_error: string | null;
+  }>({ connected: false, last_sync_at: null, last_error: null });
+  const [garminKeyInput, setGarminKeyInput] = useState("");
+  const [garminBusy, setGarminBusy] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [authErr, setAuthErr] = useState<string | null>(null);
   const [passkeys, setPasskeys] = useState<PasskeyRecord[]>([]);
@@ -72,6 +79,7 @@ export function SettingsPage({
 
   useEffect(() => {
     void api.getStravaStatus().then(setStrava);
+    void api.getGarminStatus().then(setGarmin);
   }, []);
 
   useEffect(() => {
@@ -137,6 +145,52 @@ export function SettingsPage({
     await api.updateProfile({ features: { indoor_trainer: enabled } });
     await onThresholdsUpdated();
     setSavedMsg(enabled ? "Enabled indoor trainer & route tabs." : "Hid indoor trainer tabs.");
+  };
+
+  const handleConnectGarmin = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!garminKeyInput.trim()) return;
+    setGarminBusy(true);
+    setAuthErr(null);
+    setSavedMsg(null);
+    try {
+      const res = await api.connectGarmin(garminKeyInput.trim());
+      setGarmin(res.status);
+      setGarminKeyInput("");
+      setSavedMsg("Connected Garmin Connect Personal API (hourly sync enabled).");
+    } catch (err) {
+      setAuthErr(err instanceof Error ? err.message : "Failed to connect Garmin Personal API");
+    } finally {
+      setGarminBusy(false);
+    }
+  };
+
+  const handleSyncGarmin = async () => {
+    setGarminBusy(true);
+    setAuthErr(null);
+    setSavedMsg(null);
+    try {
+      const res = await api.syncGarminNow(7);
+      setSavedMsg(
+        `Garmin sync complete: ${res.activities_imported} new activities, ${res.biometrics_upserted} daily biometric records.`
+      );
+      setGarmin(await api.getGarminStatus());
+    } catch (err) {
+      setAuthErr(err instanceof Error ? err.message : "Garmin sync failed");
+    } finally {
+      setGarminBusy(false);
+    }
+  };
+
+  const handleDisconnectGarmin = async () => {
+    setGarminBusy(true);
+    try {
+      await api.disconnectGarmin();
+      setGarmin({ connected: false, last_sync_at: null, last_error: null });
+      setSavedMsg("Disconnected Garmin Personal API.");
+    } finally {
+      setGarminBusy(false);
+    }
   };
 
   return (
@@ -268,6 +322,71 @@ export function SettingsPage({
               >
                 Connect Strava
               </a>
+            )}
+          </div>
+
+          <div className="border-t border-zinc-800 pt-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">Garmin Connect Personal API</h3>
+              <span
+                className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                  garmin.connected
+                    ? "bg-emerald-500/20 text-emerald-300"
+                    : "bg-zinc-800 text-zinc-400"
+                }`}
+              >
+                {garmin.connected ? "Connected" : "Not connected"}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-zinc-400">
+              Auto-ingests Garmin runs, rides, `.fit` splits, overnight HRV, sleep, resting HR, and
+              Body Battery hourly. Generate your key in Garmin Connect Web → Account Settings →
+              Personal API Key.
+            </p>
+            {garmin.last_sync_at && (
+              <p className="mt-1 text-[11px] text-zinc-500">
+                Last sync: {new Date(garmin.last_sync_at).toLocaleString()}
+              </p>
+            )}
+            {garmin.last_error && (
+              <p className="mt-1 text-[11px] text-amber-300">Last error: {garmin.last_error}</p>
+            )}
+            {garmin.connected ? (
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  disabled={garminBusy}
+                  onClick={() => void handleSyncGarmin()}
+                  className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:opacity-60"
+                >
+                  {garminBusy ? "Syncing..." : "Sync Now"}
+                </button>
+                <button
+                  type="button"
+                  disabled={garminBusy}
+                  onClick={() => void handleDisconnectGarmin()}
+                  className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-700"
+                >
+                  Disconnect
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={(e) => void handleConnectGarmin(e)} className="mt-2 flex gap-2">
+                <input
+                  type="password"
+                  value={garminKeyInput}
+                  onChange={(e) => setGarminKeyInput(e.target.value)}
+                  placeholder="Paste Garmin Personal API Key"
+                  className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-white"
+                />
+                <button
+                  type="submit"
+                  disabled={garminBusy}
+                  className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:opacity-60"
+                >
+                  {garminBusy ? "Verifying..." : "Connect"}
+                </button>
+              </form>
             )}
           </div>
         </div>

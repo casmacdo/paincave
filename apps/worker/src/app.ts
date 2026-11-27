@@ -10,6 +10,7 @@ import { createRideRoutes } from "./routes/rides.js";
 import { createFitnessRoutes } from "./routes/fitness.js";
 import { createRouteRoutes } from "./routes/routes.js";
 import { createStravaRoutes } from "./routes/strava.js";
+import { createGarminRoutes } from "./routes/garmin.js";
 import { createMcpRoutes } from "./mcp/server.js";
 import { createMcpOAuthRoutes } from "./mcp/oauth.js";
 
@@ -67,6 +68,7 @@ export function createApp(): Hono<HonoAppContext> {
   app.route("/api/fitness", createFitnessRoutes());
   app.route("/api/routes", createRouteRoutes());
   app.route("/api/strava", createStravaRoutes());
+  app.route("/api/garmin", createGarminRoutes());
   app.route("/mcp", createMcpRoutes());
   app.route("/", createMcpOAuthRoutes());
 

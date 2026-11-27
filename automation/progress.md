@@ -76,3 +76,12 @@ This file is an append-only handoff log maintained by `scripts/update-task.mjs` 
 
 ## 2026-11-27 17:36 UTC — M8-03 (`pending` -> `done`)
 - Scoped all Worker APIs, R2 prefixes, and MCP tools by userId with cross-user isolation tests and sport-aware PWA nav
+
+## 2026-11-27 17:39 UTC — M9-01 (`pending` -> `done`)
+- Extended FIT reader for multi-sport/laps and added running physiology engine (GAP, Pa:HR, rTSS/hrTSS, best efforts)
+
+## 2026-11-27 17:45 UTC — M9-02 (`pending` -> `done`)
+- Implemented AES-GCM key encryption, Garmin Connect Personal API client, and idempotent FIT/biometrics sync
+
+## 2026-11-27 17:48 UTC — M9-03 (`pending` -> `done`)
+- Wired hourly Worker Cron Trigger, /api/garmin endpoints, /api/fitness/biometrics, and Settings/Analytics readiness UI

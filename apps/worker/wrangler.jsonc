@@ -34,6 +34,9 @@
     "APP_ENV": "development",
     "BUILD_SHA": "dev"
   },
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
   "observability": {
     "enabled": true,
     "logs": {

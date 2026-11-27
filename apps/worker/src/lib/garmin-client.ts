@@ -1,0 +1,448 @@
+import type { ActivitySport } from "./rides-service.js";
+
+export const GARMIN_PERSONAL_API_BASE = "https://personal.connectapi.garmin.com";
+
+export class GarminRateLimitError extends Error {
+  readonly retryAfterSeconds: number | null;
+  constructor(message: string, retryAfterSeconds: number | null = null) {
+    super(message);
+    this.name = "GarminRateLimitError";
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+export interface GarminTokenResult {
+  access_token: string;
+  expires_at: number; // Unix epoch seconds
+}
+
+export interface GarminActivityMeta {
+  activityId: string;
+  activityName: string;
+  sport: ActivitySport;
+  subSport: string | null;
+  startTimeIso: string;
+  rideDay: string;
+  durationS: number;
+  distanceM: number | null;
+  elevationGainM: number | null;
+  avgHr: number | null;
+  maxHr: number | null;
+  avgPower: number | null;
+  avgCadence: number | null;
+}
+
+export interface DailyBiometricsInput {
+  day: string;
+  hrv_rmssd_ms?: number | null;
+  hrv_status?: string | null;
+  resting_hr_bpm?: number | null;
+  sleep_duration_s?: number | null;
+  sleep_deep_s?: number | null;
+  sleep_rem_s?: number | null;
+  sleep_light_s?: number | null;
+  sleep_awake_s?: number | null;
+  sleep_score?: number | null;
+  body_battery_high?: number | null;
+  body_battery_low?: number | null;
+  body_battery_charged?: number | null;
+  stress_avg?: number | null;
+  steps?: number | null;
+  spo2_avg?: number | null;
+  weight_kg?: number | null;
+  cycle_phase?: string | null;
+  raw_json?: Record<string, unknown>;
+}
+
+function addDaysUtc(day: string, deltaDays: number): string {
+  const [y, m, d] = day.split("-").map(Number);
+  if (!y || !m || !d) return day;
+  const dt = new Date(Date.UTC(y, m - 1, d + deltaDays));
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+export function splitDateRangeChunks(
+  startDay: string,
+  endDay: string,
+  maxChunkDays = 7
+): { start: string; end: string }[] {
+  const chunks: { start: string; end: string }[] = [];
+  let cur = startDay;
+  const step = Math.max(1, maxChunkDays - 1);
+  while (cur <= endDay) {
+    const candidateEnd = addDaysUtc(cur, step);
+    const chunkEnd = candidateEnd < endDay ? candidateEnd : endDay;
+    chunks.push({ start: cur, end: chunkEnd });
+    cur = addDaysUtc(chunkEnd, 1);
+  }
+  return chunks;
+}
+
+export function normalizeGarminSportType(rawType: string | undefined): {
+  sport: ActivitySport;
+  subSport: string | null;
+} {
+  const key = (rawType ?? "").toLowerCase();
+  if (key.includes("run") || key.includes("jog")) {
+    const sub = key.includes("trail")
+      ? "trail"
+      : key.includes("treadmill")
+        ? "treadmill"
+        : key.includes("track")
+          ? "track"
+          : "road";
+    return { sport: "running", subSport: sub };
+  }
+  if (key.includes("cycl") || key.includes("bik") || key.includes("ride")) {
+    const sub = key.includes("virtual")
+      ? "virtual_activity"
+      : key.includes("indoor")
+        ? "indoor_cycling"
+        : key.includes("mountain") || key.includes("mtb")
+          ? "mountain"
+          : "road";
+    return { sport: "cycling", subSport: sub };
+  }
+  if (key.includes("strength") || key.includes("weight") || key.includes("hiit")) {
+    return { sport: "strength", subSport: "strength_training" };
+  }
+  if (key.includes("yoga") || key.includes("pilates") || key.includes("mobility") || key.includes("stretch")) {
+    return { sport: "mobility", subSport: "mobility" };
+  }
+  return { sport: "other", subSport: key || null };
+}
+
+function checkRateLimit(resp: Response, context: string): void {
+  if (resp.status === 429) {
+    const retryHeader = resp.headers.get("Retry-After");
+    const retrySec = retryHeader && /^\d+$/.test(retryHeader) ? Number(retryHeader) : null;
+    throw new GarminRateLimitError(`Garmin Personal API rate limited (429) during ${context}`, retrySec);
+  }
+}
+
+export async function exchangeGarminPersonalToken(apiKey: string): Promise<GarminTokenResult> {
+  const resp = await globalThis.fetch(
+    `${GARMIN_PERSONAL_API_BASE}/personalapitoken-service/personal-api/personal-api-key/token`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `ApiKey ${apiKey.trim()}`,
+        Accept: "application/json",
+      },
+    }
+  );
+
+  checkRateLimit(resp, "token exchange");
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "");
+    throw new Error(`Garmin token exchange failed (${resp.status}): ${errText.slice(0, 200)}`);
+  }
+
+  const data = await resp.json<{
+    access_token?: string;
+    token?: string;
+    expires_in?: number;
+  }>();
+  const accessToken = data.access_token ?? data.token;
+  if (!accessToken) {
+    throw new Error("Garmin Personal API returned no access token");
+  }
+  const ttlSec =
+    typeof data.expires_in === "number" && data.expires_in > 300
+      ? Math.min(data.expires_in, 86_400)
+      : 82_800; // 23h conservative default for 24h JWT
+  return {
+    access_token: accessToken,
+    expires_at: Math.floor(Date.now() / 1000) + ttlSec,
+  };
+}
+
+function asNum(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function asStr(v: unknown): string | null {
+  return typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
+}
+
+export async function fetchGarminActivities(
+  jwt: string,
+  startDay: string,
+  endDay: string
+): Promise<GarminActivityMeta[]> {
+  const chunks = splitDateRangeChunks(startDay, endDay, 7);
+  const out: GarminActivityMeta[] = [];
+  const seen = new Set<string>();
+
+  for (const chunk of chunks) {
+    const url = new URL(`${GARMIN_PERSONAL_API_BASE}/activitylist-service/activities/search/activities`);
+    url.searchParams.set("startDate", chunk.start);
+    url.searchParams.set("endDate", chunk.end);
+    url.searchParams.set("limit", "100");
+
+    const resp = await globalThis.fetch(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        Accept: "application/json",
+      },
+    });
+    checkRateLimit(resp, "activity search");
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      throw new Error(`Garmin activity list failed (${resp.status}): ${errText.slice(0, 200)}`);
+    }
+
+    const raw = await resp.json<unknown>();
+    const list = Array.isArray(raw)
+      ? raw
+      : raw && typeof raw === "object" && Array.isArray((raw as { activities?: unknown[] }).activities)
+        ? (raw as { activities: unknown[] }).activities
+        : [];
+
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const rec = item as Record<string, unknown>;
+      const idRaw = rec["activityId"] ?? rec["id"];
+      if (typeof idRaw !== "string" && typeof idRaw !== "number") continue;
+      const activityId = String(idRaw);
+      if (seen.has(activityId)) continue;
+      seen.add(activityId);
+
+      const typeObj = rec["activityType"] as { typeKey?: string } | undefined;
+      const typeKey = typeObj?.typeKey ?? asStr(rec["activityType"]) ?? asStr(rec["sportType"]) ?? "";
+      const { sport, subSport } = normalizeGarminSportType(typeKey);
+
+      const startRaw =
+        asStr(rec["startTimeGMT"]) ??
+        asStr(rec["startTimeLocal"]) ??
+        asStr(rec["startTime"]) ??
+        `${chunk.start}T12:00:00Z`;
+      const startTimeIso = startRaw.includes("T")
+        ? startRaw.endsWith("Z")
+          ? startRaw
+          : `${startRaw}Z`
+        : startRaw.replace(" ", "T") + "Z";
+      const rideDay = startTimeIso.slice(0, 10);
+
+      out.push({
+        activityId,
+        activityName: asStr(rec["activityName"]) ?? `${sport[0]!.toUpperCase()}${sport.slice(1)} Activity`,
+        sport,
+        subSport,
+        startTimeIso,
+        rideDay,
+        durationS: Math.max(0, Math.round(asNum(rec["duration"]) ?? asNum(rec["movingDuration"]) ?? 0)),
+        distanceM: asNum(rec["distance"]),
+        elevationGainM: asNum(rec["elevationGain"]),
+        avgHr: asNum(rec["averageHR"]) !== null ? Math.round(asNum(rec["averageHR"])!) : null,
+        maxHr: asNum(rec["maxHR"]) !== null ? Math.round(asNum(rec["maxHR"])!) : null,
+        avgPower: asNum(rec["avgPower"]) !== null ? Math.round(asNum(rec["avgPower"])!) : null,
+        avgCadence:
+          asNum(rec["averageRunningCadenceInStepsPerMinute"]) !== null
+            ? Math.round(asNum(rec["averageRunningCadenceInStepsPerMinute"])!)
+            : asNum(rec["averageBikingCadenceInRevPerMinute"]) !== null
+              ? Math.round(asNum(rec["averageBikingCadenceInRevPerMinute"])!)
+              : null,
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Extracts a `.fit` file from a ZIP container if Garmin wraps the activity file in a ZIP archive.
+ */
+async function unwrapZipIfNeeded(bytes: Uint8Array): Promise<Uint8Array> {
+  // ZIP local file header signature: 0x50 0x4b 0x03 0x04 ("PK\x03\x04")
+  if (
+    bytes.length < 30 ||
+    bytes[0] !== 0x50 ||
+    bytes[1] !== 0x4b ||
+    bytes[2] !== 0x03 ||
+    bytes[3] !== 0x04
+  ) {
+    return bytes;
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 0;
+
+  while (offset + 30 <= bytes.length) {
+    if (view.getUint32(offset, true) !== 0x04034b50) break;
+    const method = view.getUint16(offset + 8, true);
+    const compSize = view.getUint32(offset + 18, true);
+    const nameLen = view.getUint16(offset + 26, true);
+    const extraLen = view.getUint16(offset + 28, true);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + nameLen + extraLen;
+    const fileName = new TextDecoder().decode(bytes.subarray(nameStart, nameStart + nameLen)).toLowerCase();
+
+    if (compSize > 0 && dataStart + compSize <= bytes.length) {
+      const payload = bytes.subarray(dataStart, dataStart + compSize);
+      if (fileName.endsWith(".fit") || offset === 0) {
+        if (method === 0) {
+          return payload;
+        }
+        if (method === 8) {
+          const ds = new DecompressionStream("deflate-raw");
+          const writer = ds.writable.getWriter();
+          await writer.write(payload);
+          await writer.close();
+          const outBuf = await new Response(ds.readable).arrayBuffer();
+          return new Uint8Array(outBuf);
+        }
+      }
+      offset = dataStart + compSize;
+    } else {
+      break;
+    }
+  }
+
+  return bytes;
+}
+
+export async function downloadGarminActivityFit(
+  jwt: string,
+  activityId: string
+): Promise<Uint8Array | null> {
+  const resp = await globalThis.fetch(
+    `${GARMIN_PERSONAL_API_BASE}/download-service/files/activity/${encodeURIComponent(activityId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+      },
+    }
+  );
+
+  checkRateLimit(resp, `activity ${activityId} FIT download`);
+  if (resp.status === 404) return null;
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "");
+    throw new Error(`Garmin FIT download failed (${resp.status}): ${errText.slice(0, 200)}`);
+  }
+
+  const rawBytes = new Uint8Array(await resp.arrayBuffer());
+  if (rawBytes.byteLength < 14) return null;
+  return unwrapZipIfNeeded(rawBytes);
+}
+
+async function fetchOptionalJson(jwt: string, url: string, context: string): Promise<unknown> {
+  const resp = await globalThis.fetch(url, {
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+      Accept: "application/json",
+    },
+  });
+  checkRateLimit(resp, context);
+  if (resp.status === 404 || resp.status === 204) return null;
+  if (!resp.ok) return null;
+  return resp.json().catch(() => null);
+}
+
+export async function fetchGarminDailyBiometrics(
+  jwt: string,
+  startDay: string,
+  endDay: string
+): Promise<DailyBiometricsInput[]> {
+  const byDay = new Map<string, DailyBiometricsInput>();
+  const ensure = (day: string): DailyBiometricsInput => {
+    const existing = byDay.get(day);
+    if (existing) return existing;
+    const fresh: DailyBiometricsInput = { day, raw_json: {} };
+    byDay.set(day, fresh);
+    return fresh;
+  };
+
+  const chunks = splitDateRangeChunks(startDay, endDay, 7);
+  for (const chunk of chunks) {
+    const [dailiesRaw, hrvRaw, sleepRaw] = await Promise.all([
+      fetchOptionalJson(
+        jwt,
+        `${GARMIN_PERSONAL_API_BASE}/wellness-api/rest/dailies?startDate=${chunk.start}&endDate=${chunk.end}`,
+        "dailies"
+      ),
+      fetchOptionalJson(
+        jwt,
+        `${GARMIN_PERSONAL_API_BASE}/wellness-api/rest/hrv?startDate=${chunk.start}&endDate=${chunk.end}`,
+        "hrv"
+      ),
+      fetchOptionalJson(
+        jwt,
+        `${GARMIN_PERSONAL_API_BASE}/wellness-api/rest/sleeps?startDate=${chunk.start}&endDate=${chunk.end}`,
+        "sleeps"
+      ),
+    ]);
+
+    if (Array.isArray(dailiesRaw)) {
+      for (const item of dailiesRaw) {
+        if (!item || typeof item !== "object") continue;
+        const r = item as Record<string, unknown>;
+        const day = asStr(r["calendarDate"]) ?? asStr(r["day"]);
+        if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+        const entry = ensure(day);
+        entry.resting_hr_bpm =
+          asNum(r["restingHeartRateInBeatsPerMinute"]) ??
+          asNum(r["restingHeartRate"]) ??
+          entry.resting_hr_bpm ??
+          null;
+        entry.steps = asNum(r["steps"]) ?? asNum(r["totalSteps"]) ?? entry.steps ?? null;
+        entry.stress_avg =
+          asNum(r["averageStressLevel"]) ?? asNum(r["stressAvg"]) ?? entry.stress_avg ?? null;
+        entry.body_battery_high =
+          asNum(r["bodyBatteryHighestValue"]) ?? entry.body_battery_high ?? null;
+        entry.body_battery_low =
+          asNum(r["bodyBatteryLowestValue"]) ?? entry.body_battery_low ?? null;
+        entry.body_battery_charged =
+          asNum(r["bodyBatteryChargedValue"]) ?? entry.body_battery_charged ?? null;
+        entry.spo2_avg = asNum(r["averageSpo2"]) ?? entry.spo2_avg ?? null;
+        if (asNum(r["weightInGrams"]) !== null) {
+          entry.weight_kg = Number((asNum(r["weightInGrams"])! / 1000).toFixed(2));
+        } else if (asNum(r["weightKg"]) !== null) {
+          entry.weight_kg = Number(asNum(r["weightKg"])!.toFixed(2));
+        }
+      }
+    }
+
+    if (Array.isArray(hrvRaw)) {
+      for (const item of hrvRaw) {
+        if (!item || typeof item !== "object") continue;
+        const r = item as Record<string, unknown>;
+        const day = asStr(r["calendarDate"]) ?? asStr(r["day"]);
+        if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+        const entry = ensure(day);
+        entry.hrv_rmssd_ms =
+          asNum(r["lastNightAvg"]) ??
+          asNum(r["weeklyAvg"]) ??
+          asNum(r["hrvRmssdMs"]) ??
+          entry.hrv_rmssd_ms ??
+          null;
+        entry.hrv_status = asStr(r["status"]) ?? asStr(r["hrvStatus"]) ?? entry.hrv_status ?? null;
+      }
+    }
+
+    if (Array.isArray(sleepRaw)) {
+      for (const item of sleepRaw) {
+        if (!item || typeof item !== "object") continue;
+        const r = item as Record<string, unknown>;
+        const day = asStr(r["calendarDate"]) ?? asStr(r["day"]);
+        if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+        const entry = ensure(day);
+        entry.sleep_duration_s =
+          asNum(r["durationInSeconds"]) ?? asNum(r["sleepTimeSeconds"]) ?? entry.sleep_duration_s ?? null;
+        entry.sleep_deep_s = asNum(r["deepSleepDurationInSeconds"]) ?? entry.sleep_deep_s ?? null;
+        entry.sleep_rem_s = asNum(r["remSleepInSeconds"]) ?? entry.sleep_rem_s ?? null;
+        entry.sleep_light_s = asNum(r["lightSleepDurationInSeconds"]) ?? entry.sleep_light_s ?? null;
+        entry.sleep_awake_s = asNum(r["awakeDurationInSeconds"]) ?? entry.sleep_awake_s ?? null;
+        const overall = (r["overallSleepScore"] as { value?: unknown } | undefined)?.value;
+        entry.sleep_score =
+          asNum(overall) ?? asNum(r["sleepScore"]) ?? entry.sleep_score ?? null;
+      }
+    }
+  }
+
+  return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+}

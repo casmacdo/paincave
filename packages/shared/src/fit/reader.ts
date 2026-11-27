@@ -2,6 +2,24 @@ import type { TelemetrySample } from "../physiology/metrics.js";
 
 const FIT_EPOCH_UNIX_S = 631065600; // 1989-12-31T00:00:00Z
 
+export type NormalizedFitSport = "cycling" | "running" | "strength" | "mobility" | "other";
+
+export interface ParsedFitLap {
+  lap_index: number;
+  start_time_iso: string | null;
+  duration_s: number;
+  elapsed_s: number;
+  distance_m: number | null;
+  avg_speed_mps: number | null;
+  avg_pace_s_per_km: number | null;
+  avg_power: number | null;
+  avg_hr: number | null;
+  max_hr: number | null;
+  avg_cadence: number | null;
+  elevation_gain_m: number | null;
+  elevation_loss_m: number | null;
+}
+
 interface FitFieldDef {
   fieldNum: number;
   size: number;
@@ -17,9 +35,65 @@ interface FitLocalDef {
 
 export interface ParsedFitRide {
   startTimeIso: string | null;
+  sport: NormalizedFitSport;
+  sportCode: number | null;
   subSport: number | null;
+  subSportName: string | null;
   hasGps: boolean;
+  totalDistanceM: number | null;
+  totalAscentM: number | null;
+  totalDescentM: number | null;
+  totalTimerTimeS: number | null;
+  totalElapsedTimeS: number | null;
+  laps: ParsedFitLap[];
   samples: TelemetrySample[];
+}
+
+export function mapFitSportCode(
+  sportCode: number | null,
+  subSportCode: number | null
+): NormalizedFitSport {
+  if (sportCode === 1) return "running";
+  if (sportCode === 2) return "cycling";
+  if (sportCode === 10 || sportCode === 4) {
+    // FIT sport=10 (training), sub_sport 20=strength_training, 43=flexibility/mobility, 44=pilates, 45=yoga
+    if (subSportCode === 43 || subSportCode === 44 || subSportCode === 45) return "mobility";
+    return "strength";
+  }
+  if (sportCode === 11) return "running"; // walking/hiking fallback if needed -> map to other unless running
+  if (sportCode === null) return "cycling"; // default for legacy cycling FITs without sport field
+  return "other";
+}
+
+export function mapFitSubSportName(subSport: number | null): string | null {
+  switch (subSport) {
+    case 1:
+      return "treadmill";
+    case 2:
+      return "street";
+    case 3:
+      return "trail";
+    case 4:
+      return "track";
+    case 5:
+      return "spin";
+    case 6:
+      return "indoor_cycling";
+    case 7:
+      return "road";
+    case 8:
+      return "mountain";
+    case 20:
+      return "strength_training";
+    case 43:
+    case 44:
+    case 45:
+      return "mobility";
+    case 58:
+      return "virtual_activity";
+    default:
+      return null;
+  }
 }
 
 function readUInt(
@@ -51,8 +125,8 @@ function fitTimestampToIso(fitTs: number): string {
 }
 
 /**
- * Minimal pure-TypeScript FIT v1/v2 decoder extracting `record` (msg 20) 1Hz telemetry
- * and session `start_time` (msg 18) without external dependencies.
+ * Pure-TypeScript FIT v1/v2 decoder extracting multi-sport session metadata (msg 18),
+ * lap splits (msg 19), and 1Hz telemetry records (msg 20) without external dependencies.
  */
 export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
   if (fitBytes.length < 14) {
@@ -83,15 +157,23 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
     hr: number | null;
     cadence: number | null;
     speedKph: number | null;
+    distanceM: number | null;
     latDeg: number | null;
     lonDeg: number | null;
     elevationM: number | null;
   }[] = [];
+  const laps: ParsedFitLap[] = [];
 
   let cursor = headerSize;
   let lastTimestamp = 0;
   let startTimeFit: number | null = null;
+  let sportCode: number | null = null;
   let subSport: number | null = null;
+  let totalDistanceM: number | null = null;
+  let totalAscentM: number | null = null;
+  let totalDescentM: number | null = null;
+  let totalTimerTimeS: number | null = null;
+  let totalElapsedTimeS: number | null = null;
   let hasGps = false;
 
   while (cursor < dataEnd) {
@@ -156,14 +238,29 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
       lastTimestamp = compressedTs;
     }
 
+    // Record fields (msg 20)
     let ts: number | null = compressedTs;
     let watts: number | null = null;
     let hr: number | null = null;
     let cadence: number | null = null;
     let speedKph: number | null = null;
+    let distanceM: number | null = null;
     let latDeg: number | null = null;
     let lonDeg: number | null = null;
     let elevationM: number | null = null;
+
+    // Lap fields (msg 19)
+    let lapStartTs: number | null = null;
+    let lapElapsedS: number | null = null;
+    let lapTimerS: number | null = null;
+    let lapDistanceM: number | null = null;
+    let lapAvgSpeedMps: number | null = null;
+    let lapAvgHr: number | null = null;
+    let lapMaxHr: number | null = null;
+    let lapAvgCadence: number | null = null;
+    let lapAvgPower: number | null = null;
+    let lapAscentM: number | null = null;
+    let lapDescentM: number | null = null;
 
     for (const f of def.fields) {
       if (cursor + f.size > dataEnd) {
@@ -176,7 +273,6 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
       if (val === null) continue;
 
       if (def.globalMsgNum === 20) {
-        // Record message
         if (f.fieldNum === 253 && f.size === 4 && val !== 0xffffffff) {
           ts = val;
           lastTimestamp = val;
@@ -200,6 +296,8 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
           hr = val;
         } else if (f.fieldNum === 4 && f.size === 1 && val !== 0xff) {
           cadence = val;
+        } else if (f.fieldNum === 5 && f.size === 4 && val !== 0xffffffff) {
+          distanceM = Number((val / 100).toFixed(2));
         } else if (f.fieldNum === 7 && f.size === 2 && val !== 0xffff) {
           watts = val;
         } else if (f.fieldNum === 6 && f.size === 2 && val !== 0xffff) {
@@ -207,12 +305,51 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
         } else if (f.fieldNum === 73 && f.size === 4 && val !== 0xffffffff) {
           speedKph = Number(((val / 1000) * 3.6).toFixed(1));
         }
+      } else if (def.globalMsgNum === 19) {
+        // Lap message
+        if (f.fieldNum === 2 && f.size === 4 && val !== 0xffffffff) {
+          lapStartTs = val;
+        } else if (f.fieldNum === 7 && f.size === 4 && val !== 0xffffffff) {
+          lapElapsedS = Math.round(val / 1000);
+        } else if (f.fieldNum === 8 && f.size === 4 && val !== 0xffffffff) {
+          lapTimerS = Math.round(val / 1000);
+        } else if (f.fieldNum === 9 && f.size === 4 && val !== 0xffffffff) {
+          lapDistanceM = Number((val / 100).toFixed(2));
+        } else if (f.fieldNum === 13 && f.size === 2 && val !== 0xffff) {
+          lapAvgSpeedMps = val / 1000;
+        } else if (f.fieldNum === 110 && f.size === 4 && val !== 0xffffffff) {
+          lapAvgSpeedMps = val / 1000;
+        } else if (f.fieldNum === 15 && f.size === 1 && val !== 0xff) {
+          lapAvgHr = val;
+        } else if (f.fieldNum === 16 && f.size === 1 && val !== 0xff) {
+          lapMaxHr = val;
+        } else if (f.fieldNum === 17 && f.size === 1 && val !== 0xff) {
+          lapAvgCadence = val;
+        } else if (f.fieldNum === 19 && f.size === 2 && val !== 0xffff) {
+          lapAvgPower = val;
+        } else if (f.fieldNum === 21 && f.size === 2 && val !== 0xffff) {
+          lapAscentM = val;
+        } else if (f.fieldNum === 22 && f.size === 2 && val !== 0xffff) {
+          lapDescentM = val;
+        }
       } else if (def.globalMsgNum === 18) {
-        // Session message: start_time = field 2, sub_sport = field 6
+        // Session message
         if (f.fieldNum === 2 && f.size === 4 && val !== 0xffffffff && startTimeFit === null) {
           startTimeFit = val;
+        } else if (f.fieldNum === 5 && f.size === 1 && val !== 0xff && sportCode === null) {
+          sportCode = val;
         } else if (f.fieldNum === 6 && f.size === 1 && val !== 0xff && subSport === null) {
           subSport = val;
+        } else if (f.fieldNum === 7 && f.size === 4 && val !== 0xffffffff) {
+          totalElapsedTimeS = Math.round(val / 1000);
+        } else if (f.fieldNum === 8 && f.size === 4 && val !== 0xffffffff) {
+          totalTimerTimeS = Math.round(val / 1000);
+        } else if (f.fieldNum === 9 && f.size === 4 && val !== 0xffffffff) {
+          totalDistanceM = Number((val / 100).toFixed(2));
+        } else if (f.fieldNum === 22 && f.size === 2 && val !== 0xffff) {
+          totalAscentM = val;
+        } else if (f.fieldNum === 23 && f.size === 2 && val !== 0xffff) {
+          totalDescentM = val;
         }
       } else if (def.globalMsgNum === 0) {
         // FileId message: time_created = field 4
@@ -225,7 +362,38 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
     cursor += def.devBytes;
 
     if (def.globalMsgNum === 20) {
-      rawRecords.push({ ts, watts, hr, cadence, speedKph, latDeg, lonDeg, elevationM });
+      rawRecords.push({
+        ts,
+        watts,
+        hr,
+        cadence,
+        speedKph,
+        distanceM,
+        latDeg,
+        lonDeg,
+        elevationM,
+      });
+    } else if (def.globalMsgNum === 19) {
+      const durationS = lapTimerS ?? lapElapsedS ?? 0;
+      const resolvedSpeed =
+        lapAvgSpeedMps ?? (lapDistanceM && durationS > 0 ? lapDistanceM / durationS : null);
+      const pace =
+        resolvedSpeed && resolvedSpeed > 0.2 ? Number((1000 / resolvedSpeed).toFixed(1)) : null;
+      laps.push({
+        lap_index: laps.length,
+        start_time_iso: lapStartTs !== null ? fitTimestampToIso(lapStartTs) : null,
+        duration_s: durationS,
+        elapsed_s: lapElapsedS ?? durationS,
+        distance_m: lapDistanceM,
+        avg_speed_mps: resolvedSpeed !== null ? Number(resolvedSpeed.toFixed(3)) : null,
+        avg_pace_s_per_km: pace,
+        avg_power: lapAvgPower,
+        avg_hr: lapAvgHr,
+        max_hr: lapMaxHr,
+        avg_cadence: lapAvgCadence,
+        elevation_gain_m: lapAscentM,
+        elevation_loss_m: lapDescentM,
+      });
     }
   }
 
@@ -236,6 +404,7 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
     hr_bpm: r.hr,
     cadence_rpm: r.cadence,
     speed_kph: r.speedKph,
+    ...(r.distanceM !== null ? { distance_m: r.distanceM } : {}),
     ...(r.latDeg !== null ? { lat_deg: r.latDeg } : {}),
     ...(r.lonDeg !== null ? { lon_deg: r.lonDeg } : {}),
     ...(r.elevationM !== null ? { elevation_m: r.elevationM } : {}),
@@ -244,8 +413,17 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
   const resolvedStart = startTimeFit ?? firstTs;
   return {
     startTimeIso: resolvedStart !== null ? fitTimestampToIso(resolvedStart) : null,
+    sport: mapFitSportCode(sportCode, subSport),
+    sportCode,
     subSport,
+    subSportName: mapFitSubSportName(subSport),
     hasGps,
+    totalDistanceM,
+    totalAscentM,
+    totalDescentM,
+    totalTimerTimeS,
+    totalElapsedTimeS,
+    laps,
     samples,
   };
 }

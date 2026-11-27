@@ -22,6 +22,7 @@ interface AnalyticsPageProps {
 export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
   const [rangeDays, setRangeDays] = useState<42 | 90>(42);
   const [overview, setOverview] = useState<FitnessOverviewResponse | null>(null);
+  const [biometrics, setBiometrics] = useState<Awaited<ReturnType<typeof api.getBiometrics>>>(null);
   const [rides, setRides] = useState<RideRecord[]>([]);
   const [selectedDetail, setSelectedDetail] = useState<Awaited<
     ReturnType<typeof api.getRideDetail>
@@ -34,9 +35,14 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
   const [deletingRideUuid, setDeletingRideUuid] = useState<string | null>(null);
 
   const loadData = useCallback(async (days: 42 | 90) => {
-    const [ov, rs] = await Promise.all([api.getFitnessOverview(days), api.getRides(25)]);
+    const [ov, rs, bio] = await Promise.all([
+      api.getFitnessOverview(days),
+      api.getRides(25),
+      api.getBiometrics(days),
+    ]);
     setOverview(ov);
     setRides(rs.rides);
+    setBiometrics(bio);
   }, []);
 
   useEffect(() => {
@@ -216,6 +222,54 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
       {actionStatus && (
         <div className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-zinc-300">
           {actionStatus}
+        </div>
+      )}
+
+      {/* Daily Readiness & Biometrics (shown automatically when Garmin/biometric data exists) */}
+      {biometrics && biometrics.summary.latest && (
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+            <div className="text-xs text-zinc-400">HRV (7d Avg)</div>
+            <div className="mt-1 text-2xl font-bold text-emerald-400">
+              {biometrics.summary.hrv_7d_avg !== null ? `${biometrics.summary.hrv_7d_avg} ms` : "—"}
+            </div>
+            {biometrics.summary.hrv_delta_pct !== null && (
+              <div className="mt-0.5 text-[11px] text-zinc-500">
+                {biometrics.summary.hrv_delta_pct >= 0 ? "+" : ""}
+                {biometrics.summary.hrv_delta_pct}% vs baseline
+              </div>
+            )}
+          </div>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+            <div className="text-xs text-zinc-400">Resting HR (7d)</div>
+            <div className="mt-1 text-2xl font-bold text-sky-400">
+              {biometrics.summary.resting_hr_7d_avg !== null
+                ? `${biometrics.summary.resting_hr_7d_avg} bpm`
+                : "—"}
+            </div>
+          </div>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+            <div className="text-xs text-zinc-400">Sleep (7d Avg)</div>
+            <div className="mt-1 text-2xl font-bold text-indigo-300">
+              {biometrics.summary.sleep_hours_7d_avg !== null
+                ? `${biometrics.summary.sleep_hours_7d_avg} h`
+                : "—"}
+            </div>
+            {biometrics.summary.sleep_score_7d_avg !== null && (
+              <div className="mt-0.5 text-[11px] text-zinc-500">
+                Score {biometrics.summary.sleep_score_7d_avg}/100
+              </div>
+            )}
+          </div>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+            <div className="text-xs text-zinc-400">Body Battery Peak</div>
+            <div className="mt-1 text-2xl font-bold text-orange-400">
+              {biometrics.summary.latest.body_battery_high !== null
+                ? `${biometrics.summary.latest.body_battery_high}`
+                : "—"}
+            </div>
+            <div className="mt-0.5 text-[11px] text-zinc-500">{biometrics.summary.latest.day}</div>
+          </div>
         </div>
       )}
 

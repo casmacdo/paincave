@@ -1,0 +1,256 @@
+import { env, exports } from "cloudflare:workers";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { decryptSecret, encryptSecret } from "../src/lib/crypto.js";
+import { GARMIN_PERSONAL_API_BASE } from "../src/lib/garmin-client.js";
+
+const testEnv = env as typeof env & { ALLOWED_USER_EMAILS?: string };
+
+function buildRunFitBytes(): Uint8Array {
+  const bytes: number[] = [];
+  const pushU16 = (v: number) => bytes.push(v & 0xff, (v >> 8) & 0xff);
+  const pushU32 = (v: number) =>
+    bytes.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff);
+  for (let i = 0; i < 14; i++) bytes.push(0);
+
+  // Session msg 18: start_time(2,4), sport(5,1)=1(running), total_timer_time(8,4), total_distance(9,4), total_ascent(22,2)
+  bytes.push(0x40, 0, 0);
+  pushU16(18);
+  bytes.push(5);
+  bytes.push(2, 4, 0x86, 5, 1, 0x00, 8, 4, 0x86, 9, 4, 0x86, 22, 2, 0x84);
+  bytes.push(0x00);
+  pushU32(1_150_000_000);
+  bytes.push(1);
+  pushU32(1_500_000);
+  pushU32(500_000);
+  pushU16(45);
+
+  // Lap msg 19: total_timer_time(8,4), total_distance(9,4), avg_heart_rate(15,1)
+  bytes.push(0x41, 0, 0);
+  pushU16(19);
+  bytes.push(3);
+  bytes.push(8, 4, 0x86, 9, 4, 0x86, 15, 1, 0x02);
+  bytes.push(0x01);
+  pushU32(300_000);
+  pushU32(100_000);
+  bytes.push(158);
+
+  const dataSize = bytes.length - 14;
+  bytes[0] = 14;
+  bytes[1] = 0x20;
+  bytes[4] = dataSize & 0xff;
+  bytes[5] = (dataSize >> 8) & 0xff;
+  bytes[6] = (dataSize >> 16) & 0xff;
+  bytes[7] = (dataSize >>> 24) & 0xff;
+  bytes[8] = 0x2e;
+  bytes[9] = 0x46;
+  bytes[10] = 0x49;
+  bytes[11] = 0x54;
+  bytes.push(0, 0);
+  return new Uint8Array(bytes);
+}
+
+function extractSessionCookie(headers: Headers): string {
+  const getSetCookie = (headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
+  const cookies = getSetCookie ? getSetCookie.call(headers) : [headers.get("Set-Cookie") ?? ""];
+  return cookies
+    .map((c) => c.split(";")[0]?.trim() ?? "")
+    .filter((pair) => pair.includes("better-auth.session_token="))
+    .join("; ");
+}
+
+describe("Garmin Connect Personal API Sync & Encrypted Credentials", () => {
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    testEnv.ALLOWED_USER_EMAILS = undefined;
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM daily_biometrics"),
+      env.DB.prepare("DELETE FROM provider_connections WHERE provider = 'garmin_personal'"),
+      env.DB.prepare("DELETE FROM activity_laps"),
+      env.DB.prepare("DELETE FROM rides WHERE external_provider = 'garmin_personal'"),
+      env.DB.prepare("DELETE FROM daily_pmc"),
+      env.DB.prepare("DELETE FROM session"),
+      env.DB.prepare("DELETE FROM account"),
+      env.DB.prepare("DELETE FROM user"),
+    ]);
+  });
+
+  it("encrypts and decrypts Garmin Personal API keys with AES-256-GCM", async () => {
+    const secret = "test-master-secret-0123456789abcdef";
+    const enc = await encryptSecret("garmin-personal-key-xyz-9999", secret);
+    expect(enc.startsWith("enc:v1:")).toBe(true);
+    expect(enc).not.toContain("garmin-personal-key");
+    expect(await decryptSecret(enc, secret)).toBe("garmin-personal-key-xyz-9999");
+  });
+
+  it("connects Garmin key, caches 24h JWT, imports running FIT + laps + daily HRV/sleep idempotently, and handles 429 cleanly", async () => {
+    testEnv.ALLOWED_USER_EMAILS = "runner@example.com";
+    const signUp = await exports.default.fetch("https://paincave.test/api/auth/sign-up/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://paincave.test" },
+      body: JSON.stringify({
+        name: "Runner",
+        email: "runner@example.com",
+        password: "strong-password-123",
+      }),
+    });
+    expect(signUp.status).toBe(200);
+    const cookie = extractSessionCookie(signUp.headers);
+
+    const today = new Date().toISOString().slice(0, 10);
+    let tokenCalls = 0;
+    let fitCalls = 0;
+    let simulateRateLimit = false;
+
+    const originalFetch = globalThis.fetch.bind(globalThis);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url === `${GARMIN_PERSONAL_API_BASE}/personalapitoken-service/personal-api/personal-api-key/token`) {
+        tokenCalls++;
+        const auth = new Headers(init?.headers).get("Authorization");
+        expect(auth).toBe("ApiKey garmin-live-test-key-123456");
+        return Response.json({ access_token: "garmin-jwt-24h-token", expires_in: 86400 });
+      }
+
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/activitylist-service/activities/search/activities`)) {
+        if (simulateRateLimit) {
+          return new Response("Too Many Requests", { status: 429, headers: { "Retry-After": "60" } });
+        }
+        return Response.json([
+          {
+            activityId: 90012345,
+            activityName: "Morning 5K Progression",
+            activityType: { typeKey: "running" },
+            startTimeGMT: `${today} 07:30:00`,
+            duration: 1500,
+            distance: 5000,
+            elevationGain: 45,
+            averageHR: 158,
+            maxHR: 176,
+            averageRunningCadenceInStepsPerMinute: 176,
+          },
+        ]);
+      }
+
+      if (url === `${GARMIN_PERSONAL_API_BASE}/download-service/files/activity/90012345`) {
+        fitCalls++;
+        return new Response(buildRunFitBytes(), { status: 200 });
+      }
+
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/wellness-api/rest/dailies`)) {
+        return Response.json([
+          {
+            calendarDate: today,
+            restingHeartRateInBeatsPerMinute: 48,
+            steps: 11200,
+            averageStressLevel: 24,
+            bodyBatteryHighestValue: 94,
+            bodyBatteryLowestValue: 41,
+            weightInGrams: 64500,
+          },
+        ]);
+      }
+
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/wellness-api/rest/hrv`)) {
+        return Response.json([{ calendarDate: today, lastNightAvg: 66, status: "balanced" }]);
+      }
+
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/wellness-api/rest/sleeps`)) {
+        return Response.json([
+          {
+            calendarDate: today,
+            durationInSeconds: 28800,
+            deepSleepDurationInSeconds: 5400,
+            remSleepInSeconds: 6600,
+            overallSleepScore: { value: 88 },
+          },
+        ]);
+      }
+
+      return originalFetch(input, init);
+    });
+
+    // 1. Connect Garmin Personal API key
+    const connRes = await exports.default.fetch("https://paincave.test/api/garmin/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ api_key: "garmin-live-test-key-123456" }),
+    });
+    expect(connRes.status).toBe(200);
+    expect(tokenCalls).toBe(1);
+
+    // 2. First sync reuses cached 24h JWT, downloads FIT once, stores run + laps + biometrics
+    const sync1 = await (
+      await exports.default.fetch("https://paincave.test/api/garmin/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: cookie },
+        body: JSON.stringify({ days: 2 }),
+      })
+    ).json<{ ok: boolean; activities_imported: number; biometrics_upserted: number }>();
+    expect(sync1.ok).toBe(true);
+    expect(sync1.activities_imported).toBe(1);
+    expect(sync1.biometrics_upserted).toBe(1);
+    expect(tokenCalls).toBe(1); // JWT cached!
+    expect(fitCalls).toBe(1);
+
+    // 3. Second sync skips duplicate without re-downloading FIT
+    const sync2 = await (
+      await exports.default.fetch("https://paincave.test/api/garmin/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: cookie },
+        body: JSON.stringify({ days: 2 }),
+      })
+    ).json<{ ok: boolean; activities_imported: number; activities_skipped: number }>();
+    expect(sync2.ok).toBe(true);
+    expect(sync2.activities_imported).toBe(0);
+    expect(sync2.activities_skipped).toBe(1);
+    expect(fitCalls).toBe(1);
+
+    // 4. Verify run + lap + biometrics endpoints
+    const ridesBody = await (
+      await exports.default.fetch("https://paincave.test/api/rides?sport=running", {
+        headers: { Cookie: cookie },
+      })
+    ).json<{ rides: { ride_uuid: string; sport: string; distance_m: number }[] }>();
+    expect(ridesBody.rides).toHaveLength(1);
+    expect(ridesBody.rides[0]?.sport).toBe("running");
+    expect(ridesBody.rides[0]?.distance_m).toBe(5000);
+
+    const detailBody = await (
+      await exports.default.fetch(
+        `https://paincave.test/api/rides/${ridesBody.rides[0]!.ride_uuid}`,
+        { headers: { Cookie: cookie } }
+      )
+    ).json<{ laps: { lap_index: number; avg_hr: number }[] }>();
+    expect(detailBody.laps).toHaveLength(1);
+    expect(detailBody.laps[0]?.avg_hr).toBe(158);
+
+    const bioBody = await (
+      await exports.default.fetch("https://paincave.test/api/fitness/biometrics?days=14", {
+        headers: { Cookie: cookie },
+      })
+    ).json<{
+      biometrics: { day: string; hrv_rmssd_ms: number; sleep_score: number; resting_hr_bpm: number }[];
+    }>();
+    expect(bioBody.biometrics).toHaveLength(1);
+    expect(bioBody.biometrics[0]?.hrv_rmssd_ms).toBe(66);
+    expect(bioBody.biometrics[0]?.sleep_score).toBe(88);
+    expect(bioBody.biometrics[0]?.resting_hr_bpm).toBe(48);
+
+    // 5. Graceful 429 rate-limit handling
+    simulateRateLimit = true;
+    const sync429 = await exports.default.fetch("https://paincave.test/api/garmin/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ days: 2 }),
+    });
+    expect(sync429.status).toBe(429);
+    const statusAfter = await (
+      await exports.default.fetch("https://paincave.test/api/garmin/status", {
+        headers: { Cookie: cookie },
+      })
+    ).json<{ connected: boolean; last_error: string | null }>();
+    expect(statusAfter.connected).toBe(true);
+    expect(statusAfter.last_error).toContain("429");
+  });
+});

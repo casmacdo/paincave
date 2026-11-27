@@ -10,6 +10,7 @@ export * from "./physiology/cp.js";
 export * from "./physiology/pmc.js";
 export * from "./physiology/intervals.js";
 export * from "./physiology/metrics.js";
+export * from "./physiology/running.js";
 export * from "./protocol/bridge.js";
 export * from "./fit/reader.js";
 export * from "./routes/gpx.js";
