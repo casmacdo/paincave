@@ -123,14 +123,31 @@ function checkRateLimit(resp: Response, context: string): void {
   }
 }
 
+function parseJwtExpSeconds(jwt: string): number | null {
+  const parts = jwt.split(".");
+  if (parts.length !== 3 || !parts[1]) return null;
+  try {
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+    const json = JSON.parse(atob(padded)) as { exp?: unknown };
+    if (typeof json.exp === "number" && Number.isFinite(json.exp) && json.exp > 1_000_000_000) {
+      return Math.floor(json.exp);
+    }
+  } catch {
+    // non-JWT or unparseable payload
+  }
+  return null;
+}
+
 export async function exchangeGarminPersonalToken(apiKey: string): Promise<GarminTokenResult> {
+  // Garmin's personalapitoken-service returns the JWT as text/plain and rejects Accept: application/json with HTTP 406.
   const resp = await globalThis.fetch(
     `${GARMIN_PERSONAL_API_BASE}/personalapitoken-service/personal-api/personal-api-key/token`,
     {
       method: "POST",
       headers: {
         Authorization: `ApiKey ${apiKey.trim()}`,
-        Accept: "application/json",
+        Accept: "text/plain, */*",
       },
     }
   );
@@ -141,22 +158,42 @@ export async function exchangeGarminPersonalToken(apiKey: string): Promise<Garmi
     throw new Error(`Garmin token exchange failed (${resp.status}): ${errText.slice(0, 200)}`);
   }
 
-  const data = await resp.json<{
-    access_token?: string;
-    token?: string;
-    expires_in?: number;
-  }>();
-  const accessToken = data.access_token ?? data.token;
+  const rawBody = (await resp.text()).trim();
+  if (!rawBody) {
+    throw new Error("Garmin Personal API returned an empty access token");
+  }
+
+  let accessToken: string | undefined;
+  let expiresInSec: number | null = null;
+
+  if (rawBody.startsWith("{")) {
+    const data = JSON.parse(rawBody) as {
+      access_token?: string;
+      token?: string;
+      expires_in?: number;
+    };
+    accessToken = data.access_token ?? data.token;
+    if (typeof data.expires_in === "number" && Number.isFinite(data.expires_in)) {
+      expiresInSec = data.expires_in;
+    }
+  } else {
+    accessToken = rawBody.replace(/^"+|"+$/g, "").trim();
+  }
+
   if (!accessToken) {
     throw new Error("Garmin Personal API returned no access token");
   }
-  const ttlSec =
-    typeof data.expires_in === "number" && data.expires_in > 300
-      ? Math.min(data.expires_in, 86_400)
-      : 82_800; // 23h conservative default for 24h JWT
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const jwtExp = parseJwtExpSeconds(accessToken);
+  const expiresAt =
+    jwtExp && jwtExp > nowSec + 300
+      ? jwtExp - 300
+      : nowSec + (expiresInSec && expiresInSec > 300 ? Math.min(expiresInSec, 86_400) : 82_800);
+
   return {
     access_token: accessToken,
-    expires_at: Math.floor(Date.now() / 1000) + ttlSec,
+    expires_at: expiresAt,
   };
 }
 
@@ -343,6 +380,17 @@ async function fetchOptionalJson(jwt: string, url: string, context: string): Pro
   return resp.json().catch(() => null);
 }
 
+function extractArray(raw: unknown, keys: readonly string[]): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    for (const k of keys) {
+      if (Array.isArray(obj[k])) return obj[k] as unknown[];
+    }
+  }
+  return [];
+}
+
 export async function fetchGarminDailyBiometrics(
   jwt: string,
   startDay: string,
@@ -359,87 +407,144 @@ export async function fetchGarminDailyBiometrics(
 
   const chunks = splitDateRangeChunks(startDay, endDay, 7);
   for (const chunk of chunks) {
-    const [dailiesRaw, hrvRaw, sleepRaw] = await Promise.all([
+    const [dailiesRaw, hrvRaw, sleepRaw, bodyBatteryRaw, weightRaw] = await Promise.all([
       fetchOptionalJson(
         jwt,
-        `${GARMIN_PERSONAL_API_BASE}/wellness-api/rest/dailies?startDate=${chunk.start}&endDate=${chunk.end}`,
-        "dailies"
+        `${GARMIN_PERSONAL_API_BASE}/usersummary-service/v2/dailysummaries?startDate=${chunk.start}&endDate=${chunk.end}`,
+        "dailysummaries"
       ),
       fetchOptionalJson(
         jwt,
-        `${GARMIN_PERSONAL_API_BASE}/wellness-api/rest/hrv?startDate=${chunk.start}&endDate=${chunk.end}`,
+        `${GARMIN_PERSONAL_API_BASE}/hrv-service/hrv/daily/${chunk.start}/${chunk.end}`,
         "hrv"
       ),
       fetchOptionalJson(
         jwt,
-        `${GARMIN_PERSONAL_API_BASE}/wellness-api/rest/sleeps?startDate=${chunk.start}&endDate=${chunk.end}`,
+        `${GARMIN_PERSONAL_API_BASE}/sleep-service/sleep/dailySleepSummariesByDate?startDate=${chunk.start}&endDate=${chunk.end}`,
         "sleeps"
+      ),
+      fetchOptionalJson(
+        jwt,
+        `${GARMIN_PERSONAL_API_BASE}/wellness-service/wellness/bodyBattery/reports/daily?startDate=${chunk.start}&endDate=${chunk.end}`,
+        "bodyBattery"
+      ),
+      fetchOptionalJson(
+        jwt,
+        `${GARMIN_PERSONAL_API_BASE}/weight-service/weight/range/${chunk.start}/${chunk.end}?includeAll=true`,
+        "weight"
       ),
     ]);
 
-    if (Array.isArray(dailiesRaw)) {
-      for (const item of dailiesRaw) {
-        if (!item || typeof item !== "object") continue;
-        const r = item as Record<string, unknown>;
-        const day = asStr(r["calendarDate"]) ?? asStr(r["day"]);
-        if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
-        const entry = ensure(day);
-        entry.resting_hr_bpm =
-          asNum(r["restingHeartRateInBeatsPerMinute"]) ??
-          asNum(r["restingHeartRate"]) ??
-          entry.resting_hr_bpm ??
-          null;
-        entry.steps = asNum(r["steps"]) ?? asNum(r["totalSteps"]) ?? entry.steps ?? null;
-        entry.stress_avg =
-          asNum(r["averageStressLevel"]) ?? asNum(r["stressAvg"]) ?? entry.stress_avg ?? null;
-        entry.body_battery_high =
-          asNum(r["bodyBatteryHighestValue"]) ?? entry.body_battery_high ?? null;
-        entry.body_battery_low =
-          asNum(r["bodyBatteryLowestValue"]) ?? entry.body_battery_low ?? null;
-        entry.body_battery_charged =
-          asNum(r["bodyBatteryChargedValue"]) ?? entry.body_battery_charged ?? null;
-        entry.spo2_avg = asNum(r["averageSpo2"]) ?? entry.spo2_avg ?? null;
-        if (asNum(r["weightInGrams"]) !== null) {
-          entry.weight_kg = Number((asNum(r["weightInGrams"])! / 1000).toFixed(2));
-        } else if (asNum(r["weightKg"]) !== null) {
-          entry.weight_kg = Number(asNum(r["weightKg"])!.toFixed(2));
+    for (const item of extractArray(dailiesRaw, ["dailySummaries", "summaries", "data"])) {
+      if (!item || typeof item !== "object") continue;
+      const r = item as Record<string, unknown>;
+      const day = asStr(r["calendarDate"]) ?? asStr(r["day"]);
+      if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+      const entry = ensure(day);
+      entry.resting_hr_bpm =
+        asNum(r["restingHeartRate"]) ??
+        asNum(r["restingHeartRateInBeatsPerMinute"]) ??
+        entry.resting_hr_bpm ??
+        null;
+      entry.steps = asNum(r["totalSteps"]) ?? asNum(r["steps"]) ?? entry.steps ?? null;
+      entry.stress_avg =
+        asNum(r["averageStressLevel"]) ?? asNum(r["stressAvg"]) ?? entry.stress_avg ?? null;
+      entry.body_battery_high =
+        asNum(r["bodyBatteryHighestValue"]) ?? entry.body_battery_high ?? null;
+      entry.body_battery_low =
+        asNum(r["bodyBatteryLowestValue"]) ?? entry.body_battery_low ?? null;
+      entry.body_battery_charged =
+        asNum(r["bodyBatteryChargedValue"]) ?? entry.body_battery_charged ?? null;
+      entry.spo2_avg = asNum(r["averageSpo2"]) ?? entry.spo2_avg ?? null;
+      if (asNum(r["weightInGrams"]) !== null) {
+        entry.weight_kg = Number((asNum(r["weightInGrams"])! / 1000).toFixed(2));
+      } else if (asNum(r["weightKg"]) !== null) {
+        entry.weight_kg = Number(asNum(r["weightKg"])!.toFixed(2));
+      }
+    }
+
+    for (const item of extractArray(bodyBatteryRaw, ["bodyBatteryValues", "reports", "data"])) {
+      if (!item || typeof item !== "object") continue;
+      const r = item as Record<string, unknown>;
+      const day = asStr(r["date"]) ?? asStr(r["calendarDate"]) ?? asStr(r["day"]);
+      if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+      const entry = ensure(day);
+      entry.body_battery_charged =
+        entry.body_battery_charged ?? asNum(r["charged"]) ?? asNum(r["bodyBatteryChargedValue"]) ?? null;
+      const valuesArr = r["bodyBatteryValuesArray"];
+      if (Array.isArray(valuesArr) && valuesArr.length > 0) {
+        const levels: number[] = [];
+        for (const pair of valuesArr) {
+          if (Array.isArray(pair) && typeof pair[1] === "number" && Number.isFinite(pair[1])) {
+            levels.push(pair[1]);
+          }
+        }
+        if (levels.length > 0) {
+          entry.body_battery_high = entry.body_battery_high ?? Math.max(...levels);
+          entry.body_battery_low = entry.body_battery_low ?? Math.min(...levels);
         }
       }
     }
 
-    if (Array.isArray(hrvRaw)) {
-      for (const item of hrvRaw) {
-        if (!item || typeof item !== "object") continue;
-        const r = item as Record<string, unknown>;
-        const day = asStr(r["calendarDate"]) ?? asStr(r["day"]);
-        if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
-        const entry = ensure(day);
-        entry.hrv_rmssd_ms =
-          asNum(r["lastNightAvg"]) ??
-          asNum(r["weeklyAvg"]) ??
-          asNum(r["hrvRmssdMs"]) ??
-          entry.hrv_rmssd_ms ??
-          null;
-        entry.hrv_status = asStr(r["status"]) ?? asStr(r["hrvStatus"]) ?? entry.hrv_status ?? null;
-      }
+    for (const item of extractArray(hrvRaw, ["hrvSummaries", "summaries", "data"])) {
+      if (!item || typeof item !== "object") continue;
+      const r = item as Record<string, unknown>;
+      const day = asStr(r["calendarDate"]) ?? asStr(r["day"]);
+      if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+      const entry = ensure(day);
+      entry.hrv_rmssd_ms =
+        asNum(r["lastNightAvg"]) ??
+        asNum(r["weeklyAvg"]) ??
+        asNum(r["hrvRmssdMs"]) ??
+        entry.hrv_rmssd_ms ??
+        null;
+      entry.hrv_status = asStr(r["status"]) ?? asStr(r["hrvStatus"]) ?? entry.hrv_status ?? null;
     }
 
-    if (Array.isArray(sleepRaw)) {
-      for (const item of sleepRaw) {
-        if (!item || typeof item !== "object") continue;
-        const r = item as Record<string, unknown>;
-        const day = asStr(r["calendarDate"]) ?? asStr(r["day"]);
-        if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
-        const entry = ensure(day);
-        entry.sleep_duration_s =
-          asNum(r["durationInSeconds"]) ?? asNum(r["sleepTimeSeconds"]) ?? entry.sleep_duration_s ?? null;
-        entry.sleep_deep_s = asNum(r["deepSleepDurationInSeconds"]) ?? entry.sleep_deep_s ?? null;
-        entry.sleep_rem_s = asNum(r["remSleepInSeconds"]) ?? entry.sleep_rem_s ?? null;
-        entry.sleep_light_s = asNum(r["lightSleepDurationInSeconds"]) ?? entry.sleep_light_s ?? null;
-        entry.sleep_awake_s = asNum(r["awakeDurationInSeconds"]) ?? entry.sleep_awake_s ?? null;
-        const overall = (r["overallSleepScore"] as { value?: unknown } | undefined)?.value;
-        entry.sleep_score =
-          asNum(overall) ?? asNum(r["sleepScore"]) ?? entry.sleep_score ?? null;
+    for (const item of extractArray(sleepRaw, ["dailySleepDTOs", "sleepSummaries", "data"])) {
+      if (!item || typeof item !== "object") continue;
+      const rawRec = item as Record<string, unknown>;
+      const r =
+        rawRec["dailySleepDTO"] && typeof rawRec["dailySleepDTO"] === "object"
+          ? (rawRec["dailySleepDTO"] as Record<string, unknown>)
+          : rawRec;
+      const day = asStr(r["calendarDate"]) ?? asStr(r["day"]);
+      if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+      const entry = ensure(day);
+      entry.sleep_duration_s =
+        asNum(r["sleepTimeSeconds"]) ?? asNum(r["durationInSeconds"]) ?? entry.sleep_duration_s ?? null;
+      entry.sleep_deep_s =
+        asNum(r["deepSleepSeconds"]) ?? asNum(r["deepSleepDurationInSeconds"]) ?? entry.sleep_deep_s ?? null;
+      entry.sleep_rem_s =
+        asNum(r["remSleepSeconds"]) ?? asNum(r["remSleepInSeconds"]) ?? entry.sleep_rem_s ?? null;
+      entry.sleep_light_s =
+        asNum(r["lightSleepSeconds"]) ?? asNum(r["lightSleepDurationInSeconds"]) ?? entry.sleep_light_s ?? null;
+      entry.sleep_awake_s =
+        asNum(r["awakeSleepSeconds"]) ?? asNum(r["awakeDurationInSeconds"]) ?? entry.sleep_awake_s ?? null;
+      const sleepScoresObj = r["sleepScores"] as { overall?: { value?: unknown } } | undefined;
+      const overallLegacy = (r["overallSleepScore"] as { value?: unknown } | undefined)?.value;
+      entry.sleep_score =
+        asNum(sleepScoresObj?.overall?.value) ??
+        asNum(overallLegacy) ??
+        asNum(r["sleepScore"]) ??
+        entry.sleep_score ??
+        null;
+    }
+
+    for (const item of extractArray(weightRaw, ["dailyWeightSummaries", "dateWeightList", "data"])) {
+      if (!item || typeof item !== "object") continue;
+      const r = item as Record<string, unknown>;
+      const day = asStr(r["summaryDate"]) ?? asStr(r["calendarDate"]) ?? asStr(r["day"]);
+      if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+      const latest =
+        r["latestWeight"] && typeof r["latestWeight"] === "object"
+          ? (r["latestWeight"] as Record<string, unknown>)
+          : r;
+      const grams = asNum(latest["weight"]) ?? asNum(r["weightInGrams"]);
+      if (grams !== null && grams > 20_000) {
+        ensure(day).weight_kg = Number((grams / 1000).toFixed(2));
+      } else if (asNum(latest["weightKg"]) !== null) {
+        ensure(day).weight_kg = Number(asNum(latest["weightKg"])!.toFixed(2));
       }
     }
   }

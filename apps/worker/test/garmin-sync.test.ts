@@ -107,9 +107,18 @@ describe("Garmin Connect Personal API Sync & Encrypted Credentials", () => {
 
       if (url === `${GARMIN_PERSONAL_API_BASE}/personalapitoken-service/personal-api/personal-api-key/token`) {
         tokenCalls++;
-        const auth = new Headers(init?.headers).get("Authorization");
-        expect(auth).toBe("ApiKey garmin-live-test-key-123456");
-        return Response.json({ access_token: "garmin-jwt-24h-token", expires_in: 86400 });
+        const hdrs = new Headers(init?.headers);
+        expect(hdrs.get("Authorization")).toBe("ApiKey garmin-live-test-key-123456");
+        // Regression guard: Garmin Personal API rejects Accept: application/json with HTTP 406
+        if (hdrs.get("Accept") === "application/json") {
+          return new Response('{"error":"NotAcceptableException"}', { status: 406 });
+        }
+        const exp = Math.floor(Date.now() / 1000) + 86400;
+        const payloadB64 = btoa(JSON.stringify({ sub: "garmin-user", exp })).replace(/=/g, "");
+        return new Response(`eyJhbGciOiJSUzI1NiJ9.${payloadB64}.sig`, {
+          status: 200,
+          headers: { "Content-Type": "text/plain" },
+        });
       }
 
       if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/activitylist-service/activities/search/activities`)) {
@@ -137,34 +146,54 @@ describe("Garmin Connect Personal API Sync & Encrypted Credentials", () => {
         return new Response(buildRunFitBytes(), { status: 200 });
       }
 
-      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/wellness-api/rest/dailies`)) {
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/usersummary-service/v2/dailysummaries`)) {
         return Response.json([
           {
             calendarDate: today,
-            restingHeartRateInBeatsPerMinute: 48,
-            steps: 11200,
+            restingHeartRate: 48,
+            totalSteps: 11200,
             averageStressLevel: 24,
             bodyBatteryHighestValue: 94,
             bodyBatteryLowestValue: 41,
-            weightInGrams: 64500,
           },
         ]);
       }
 
-      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/wellness-api/rest/hrv`)) {
-        return Response.json([{ calendarDate: today, lastNightAvg: 66, status: "balanced" }]);
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/hrv-service/hrv/daily/`)) {
+        return Response.json({
+          hrvSummaries: [{ calendarDate: today, lastNightAvg: 66, status: "BALANCED" }],
+        });
       }
 
-      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/wellness-api/rest/sleeps`)) {
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/sleep-service/sleep/dailySleepSummariesByDate`)) {
         return Response.json([
           {
             calendarDate: today,
-            durationInSeconds: 28800,
-            deepSleepDurationInSeconds: 5400,
-            remSleepInSeconds: 6600,
-            overallSleepScore: { value: 88 },
+            sleepTimeSeconds: 28800,
+            deepSleepSeconds: 5400,
+            remSleepSeconds: 6600,
+            sleepScores: { overall: { value: 88 } },
           },
         ]);
+      }
+
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/wellness-service/wellness/bodyBattery/reports/daily`)) {
+        return Response.json([
+          {
+            date: today,
+            charged: 62,
+            bodyBatteryValuesArray: [
+              [1700000000000, 41],
+              [1700028800000, 94],
+            ],
+          },
+        ]);
+      }
+
+      if (url.startsWith(`${GARMIN_PERSONAL_API_BASE}/weight-service/weight/range/`)) {
+        return Response.json({
+          dailyWeightSummaries: [{ summaryDate: today, latestWeight: { weight: 64500 } }],
+        });
       }
 
       return originalFetch(input, init);

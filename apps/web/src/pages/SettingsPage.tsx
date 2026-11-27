@@ -53,6 +53,7 @@ export function SettingsPage({
   }>({ connected: false, last_sync_at: null, last_error: null });
   const [garminKeyInput, setGarminKeyInput] = useState("");
   const [garminBusy, setGarminBusy] = useState(false);
+  const [garminErr, setGarminErr] = useState<string | null>(null);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [authErr, setAuthErr] = useState<string | null>(null);
   const [passkeys, setPasskeys] = useState<PasskeyRecord[]>([]);
@@ -151,7 +152,7 @@ export function SettingsPage({
     e.preventDefault();
     if (!garminKeyInput.trim()) return;
     setGarminBusy(true);
-    setAuthErr(null);
+    setGarminErr(null);
     setSavedMsg(null);
     try {
       const res = await api.connectGarmin(garminKeyInput.trim());
@@ -159,7 +160,7 @@ export function SettingsPage({
       setGarminKeyInput("");
       setSavedMsg("Connected Garmin Connect Personal API (hourly sync enabled).");
     } catch (err) {
-      setAuthErr(err instanceof Error ? err.message : "Failed to connect Garmin Personal API");
+      setGarminErr(err instanceof Error ? err.message : "Failed to connect Garmin Personal API");
     } finally {
       setGarminBusy(false);
     }
@@ -167,7 +168,7 @@ export function SettingsPage({
 
   const handleSyncGarmin = async () => {
     setGarminBusy(true);
-    setAuthErr(null);
+    setGarminErr(null);
     setSavedMsg(null);
     try {
       const res = await api.syncGarminNow(7);
@@ -176,7 +177,7 @@ export function SettingsPage({
       );
       setGarmin(await api.getGarminStatus());
     } catch (err) {
-      setAuthErr(err instanceof Error ? err.message : "Garmin sync failed");
+      setGarminErr(err instanceof Error ? err.message : "Garmin sync failed");
     } finally {
       setGarminBusy(false);
     }
@@ -351,6 +352,11 @@ export function SettingsPage({
             {garmin.last_error && (
               <p className="mt-1 text-[11px] text-amber-300">Last error: {garmin.last_error}</p>
             )}
+            {garminErr && (
+              <div className="mt-2 rounded-lg border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-200">
+                {garminErr}
+              </div>
+            )}
             {garmin.connected ? (
               <div className="mt-2 flex gap-2">
                 <button
@@ -398,9 +404,9 @@ export function SettingsPage({
             <h2 className="text-lg font-bold text-white">Account &amp; Security (Better Auth)</h2>
             <p className="mt-0.5 text-xs text-zinc-400">
               {isBetterAuth && authState?.user
-                ? `Signed in as ${authState.user.name} (${authState.user.email}) · Single-owner instance locked.`
+                ? `Signed in as ${authState.user.name} (${authState.user.email}).`
                 : "Signed in via legacy admin password fallback."}
-              {authState?.owner_email_restricted && " Enforcing ALLOWED_OWNER_EMAIL."}
+              {authState?.owner_email_restricted && " Enforcing email allowlist."}
             </p>
           </div>
           {onSignOut && (
