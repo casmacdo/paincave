@@ -424,4 +424,92 @@ export function registerReadTools(registry: McpToolRegistry): void {
       };
     }
   );
+
+  registry.register(
+    "get_training_history_summary",
+    {
+      description:
+        "Returns multi-year yearly and recent monthly volume/TSS/distance rollups plus seasonal peak CTL and power/pace bests so LLMs can analyze thousands of historical workouts compactly.",
+      inputSchema: z.object({
+        years: optionalCoercedInt(1, 15),
+        sport: optionalEnum(["all", "cycling", "running", "strength", "mobility", "other"]),
+      }),
+    },
+    async ({ years, sport }, env, userId) => {
+      const lookbackYears = years ?? 5;
+      const currentYear = Number(todayUtcDay().slice(0, 4));
+      const sinceDay = `${currentYear - lookbackYears + 1}-01-01`;
+      const sportFilter = sport && sport !== "all" ? sport : null;
+
+      const sportClause = sportFilter ? "AND sport = ?" : "";
+      const baseBinds = sportFilter ? [userId, sinceDay, sportFilter] : [userId, sinceDay];
+
+      const [yearlyRes, monthlyRes, peakCtlRes, powerBestsRes] = await Promise.all([
+        env.DB.prepare(
+          `SELECT substr(ride_day, 1, 4) AS year,
+                  sport,
+                  COUNT(*) AS sessions,
+                  ROUND(SUM(duration_s) / 3600.0, 1) AS hours,
+                  ROUND(SUM(COALESCE(distance_m, 0)) / 1000.0, 1) AS distance_km,
+                  ROUND(SUM(tss), 0) AS total_tss,
+                  MIN(CASE WHEN sport = 'running' AND avg_pace_s_per_km > 120 THEN avg_pace_s_per_km END) AS fastest_run_pace_s_per_km
+           FROM rides
+           WHERE user_id = ? AND ride_day >= ? ${sportClause}
+           GROUP BY substr(ride_day, 1, 4), sport
+           ORDER BY year DESC, sessions DESC`
+        )
+          .bind(...baseBinds)
+          .all(),
+        env.DB.prepare(
+          `SELECT substr(ride_day, 1, 7) AS month,
+                  COUNT(*) AS sessions,
+                  ROUND(SUM(duration_s) / 3600.0, 1) AS hours,
+                  ROUND(SUM(COALESCE(distance_m, 0)) / 1000.0, 1) AS distance_km,
+                  ROUND(SUM(tss), 0) AS total_tss
+           FROM rides
+           WHERE user_id = ? AND ride_day >= ? ${sportClause}
+           GROUP BY substr(ride_day, 1, 7)
+           ORDER BY month DESC
+           LIMIT 24`
+        )
+          .bind(...baseBinds)
+          .all(),
+        env.DB.prepare(
+          `SELECT substr(day, 1, 4) AS year, ROUND(MAX(ctl), 1) AS peak_ctl
+           FROM daily_pmc
+           WHERE user_id = ? AND day >= ?
+           GROUP BY substr(day, 1, 4)
+           ORDER BY year DESC`
+        )
+          .bind(userId, sinceDay)
+          .all(),
+        env.DB.prepare(
+          `SELECT substr(r.ride_day, 1, 4) AS year, rp.duration_s, MAX(rp.watts) AS max_watts
+           FROM ride_peaks rp
+           JOIN rides r ON r.ride_uuid = rp.ride_uuid
+           WHERE r.user_id = ? AND r.ride_day >= ? AND rp.duration_s IN (60, 300, 1200)
+           GROUP BY substr(r.ride_day, 1, 4), rp.duration_s
+           ORDER BY year DESC, rp.duration_s ASC`
+        )
+          .bind(userId, sinceDay)
+          .all(),
+      ]);
+
+      const totalCountRow = await env.DB.prepare(
+        `SELECT COUNT(*) AS cnt FROM rides WHERE user_id = ? AND ride_day >= ? ${sportClause}`
+      )
+        .bind(...baseBinds)
+        .first<{ cnt: number }>();
+
+      return {
+        since_day: sinceDay,
+        sport_filter: sportFilter ?? "all",
+        total_activities: totalCountRow?.cnt ?? 0,
+        yearly_rollups: yearlyRes.results,
+        recent_monthly_rollups: monthlyRes.results,
+        yearly_peak_ctl: peakCtlRes.results,
+        seasonal_power_bests: powerBestsRes.results,
+      };
+    }
+  );
 }

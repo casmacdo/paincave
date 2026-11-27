@@ -14,3 +14,4 @@ export * from "./physiology/running.js";
 export * from "./protocol/bridge.js";
 export * from "./fit/reader.js";
 export * from "./routes/gpx.js";
+export * from "./import/archive.js";

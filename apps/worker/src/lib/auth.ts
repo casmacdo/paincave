@@ -326,6 +326,35 @@ export async function requireBridgeOrUiAuth(
   await next();
 }
 
+export async function requireImporterOrUiAuth(
+  c: Context<HonoAppContext>,
+  next: Next
+): Promise<Response | void> {
+  const authHeader = c.req.header("Authorization");
+  const headerToken =
+    c.req.header("X-Importer-Token") ??
+    (authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length).trim() : undefined);
+
+  if (headerToken) {
+    const tokenUserId = await lookupDeviceTokenUser(c.env.DB, headerToken, ["importer", "bridge"]);
+    if (!tokenUserId) {
+      return c.json({ error: "Invalid importer token" }, 401);
+    }
+    c.set("authMethod", "bearer");
+    c.set("userId", tokenUserId);
+    await next();
+    return;
+  }
+
+  const check = await verifyUiSessionRequest(c);
+  if (!check.ok) {
+    return c.json({ error: check.error }, check.status);
+  }
+  c.set("authMethod", "session");
+  c.set("userId", check.userId);
+  await next();
+}
+
 export async function verifyMcpAuth(
   request: Request,
   env: AppEnv

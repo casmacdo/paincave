@@ -643,7 +643,7 @@
       "id": "M10-01",
       "milestone": "M10",
       "title": "Add batch archive import API endpoint, multi-year daily_pmc rebuild, and get_training_history_summary MCP tool",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M8-03",
         "M9-01"
@@ -659,13 +659,15 @@
         "get_training_history_summary MCP tool returns compact yearly/monthly volume rollups and seasonal bests suitable for 3,000+ workouts",
         "Tests verify duplicate skipping, multi-year PMC rebuild, and MCP summary accuracy"
       ],
-      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test",
+      "notes": "Added batch archive import API, multi-year PMC rebuild, and get_training_history_summary MCP tool",
+      "updated_at": "2026-11-27T17:52:49.909Z"
     },
     {
       "id": "M10-02",
       "milestone": "M10",
       "title": "Build local CLI bulk archive importer (scripts/import-archive.ts) for Strava Export ZIP (3,000+ workouts) and Garmin Export ZIP",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "M10-01"
       ],
@@ -679,7 +681,9 @@
         "Uploads in idempotent, resumable batches with progress logging and dry-run mode (--dry-run)",
         "Unit tests validate fixture Strava and Garmin archive parsing, gzip decompression, and deduplication keys"
       ],
-      "verify_cmd": "./scripts/verify.sh --strict"
+      "verify_cmd": "./scripts/verify.sh --strict",
+      "notes": "Built shared Strava/Garmin archive parsers and local CLI scripts/import-archive.ts with unit tests",
+      "updated_at": "2026-11-27T17:56:45.150Z"
     },
     {
       "id": "M11-01",
@@ -733,7 +737,7 @@
     {
       "id": "M11-03",
       "milestone": "M11",
-      "title": "Implement pure-TypeScript Garmin .FIT Workout binary encoder and 1-click download (plus optional Intervals.icu outbound watch push)",
+      "title": "Implement pure-TypeScript Garmin .FIT Workout binary encoder and 1-click download",
       "status": "pending",
       "depends_on": [
         "M11-01"
@@ -746,8 +750,8 @@
       ],
       "acceptance_criteria": [
         "Encodes running, cycling, and strength WorkoutSpecs into valid Garmin .fit Workout binary files (file_type=5, workout msg 26, workout_step msg 27, CRC-16 checksum)",
-        "GET /api/workouts/:id/export?format=fit downloads a Garmin-compatible .fit workout file",
-        "Optional per-user Intervals.icu outbound push sends scheduled running/cycling workouts wirelessly to Garmin watch calendar when configured",
+        "GET /api/workouts/:id/export.fit and /api/workouts/:id/export?format=fit download a Garmin-compatible .fit workout file",
+        "Workouts UI exposes 1-click Download .FIT Workout for cycling, running, and strength workouts",
         "Unit tests verify binary FIT header, CRC-16 integrity, step duration/distance/target encoding, and repeat block expansion"
       ],
       "verify_cmd": "./scripts/verify.sh --strict"

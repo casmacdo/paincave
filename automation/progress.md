@@ -85,3 +85,9 @@ This file is an append-only handoff log maintained by `scripts/update-task.mjs` 
 
 ## 2026-11-27 17:48 UTC — M9-03 (`pending` -> `done`)
 - Wired hourly Worker Cron Trigger, /api/garmin endpoints, /api/fitness/biometrics, and Settings/Analytics readiness UI
+
+## 2026-11-27 17:52 UTC — M10-01 (`pending` -> `done`)
+- Added batch archive import API, multi-year PMC rebuild, and get_training_history_summary MCP tool
+
+## 2026-11-27 17:56 UTC — M10-02 (`pending` -> `done`)
+- Built shared Strava/Garmin archive parsers and local CLI scripts/import-archive.ts with unit tests

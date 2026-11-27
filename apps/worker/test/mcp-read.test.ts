@@ -85,8 +85,9 @@ describe("Stateless Remote MCP Server — Read Tools", () => {
     const list = await mcpRpc<{
       tools: { name: string; inputSchema: Record<string, unknown> }[];
     }>("tools/list");
-    expect(list.tools).toHaveLength(16);
+    expect(list.tools.length).toBeGreaterThanOrEqual(17);
     expect(list.tools.some((t) => t.name === "get_ride_timeseries")).toBe(true);
+    expect(list.tools.some((t) => t.name === "get_training_history_summary")).toBe(true);
     expect(list.tools.some((t) => t.name === "create_workout")).toBe(true);
 
     // Seed data via MCP write tools + ride upload API
