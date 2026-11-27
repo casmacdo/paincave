@@ -9,11 +9,15 @@ function makeSnapshot(overrides?: {
   step_index?: number;
   mode?: "erg" | "slope" | "resistance";
   target_grade_pct?: number | null;
+  text_cue?: string | null;
 }): BridgeClientSnapshot {
+  const cue = overrides && "text_cue" in overrides ? overrides.text_cue ?? null : "Hold steady 90 RPM";
   return {
     connected: true,
     lastSaved: null,
     lastError: null,
+    loadedWorkoutName: "4x8m Threshold",
+    liveHistory: [],
     loadedSteps: [
       {
         step_index: 0,
@@ -65,7 +69,7 @@ function makeSnapshot(overrides?: {
       cadence_rpm: 91,
       hr_bpm: 165,
       speed_kph: 35.1,
-      text_cue: "Hold steady 90 RPM",
+      text_cue: cue,
       sensors: { trainer: "connected", hr: "connected", transport: "mock" },
       pending_uploads: 0,
     },
@@ -151,5 +155,22 @@ describe("RidePage HUD & Controls", () => {
       />
     );
     expect(toneSpy).not.toHaveBeenCalled();
+  });
+
+  it("hides synthetic SIM mode cues while preserving workout-authored cues", () => {
+    const sendCommand = vi.fn().mockReturnValue(true);
+    render(
+      <RidePage
+        snapshot={makeSnapshot({
+          mode: "slope",
+          target_grade_pct: -5.3,
+          text_cue: "SIM Mode (100% difficulty)",
+        })}
+        ftpWatts={260}
+        sendCommand={sendCommand}
+      />
+    );
+
+    expect(screen.queryByText(/Cue:/)).toBeNull();
   });
 });

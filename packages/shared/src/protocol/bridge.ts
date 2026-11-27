@@ -87,6 +87,13 @@ export const BridgeCommandSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
+export const LiveHistoryPointSchema = z.object({
+  t_s: z.number().int().nonnegative(),
+  watts: z.number().int().nullable(),
+  target_watts: z.number().int().nullable(),
+  hr_bpm: z.number().int().nullable(),
+});
+
 export const BridgeEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("telemetry"),
@@ -104,6 +111,7 @@ export const BridgeEventSchema = z.discriminatedUnion("type", [
     target_watts: z.number().int().nullable(),
     target_grade_pct: z.number().nullable(),
     erg_bias_pct: z.number().int(),
+    target_cadence_rpm: z.number().int().nullable().optional(),
     watts: z.number().int().nullable(),
     watts_3s: z.number().int().nullable(),
     cadence_rpm: z.number().int().nullable(),
@@ -122,6 +130,13 @@ export const BridgeEventSchema = z.discriminatedUnion("type", [
       transport: z.string(),
     }),
     pending_uploads: z.number().int().nonnegative(),
+  }),
+  z.object({
+    type: z.literal("session_state"),
+    workout_name: z.string().nullable(),
+    steps: z.array(FlattenedStepSchema),
+    route: RoutePayloadSchema.nullable().optional(),
+    history: z.array(LiveHistoryPointSchema),
   }),
   z.object({
     type: z.literal("ride_saved"),
@@ -241,6 +256,7 @@ export const RideUploadSummarySchema = z.object({
 
 export type RoutePoint = z.infer<typeof RoutePointSchema>;
 export type RoutePayload = z.infer<typeof RoutePayloadSchema>;
+export type LiveHistoryPoint = z.infer<typeof LiveHistoryPointSchema>;
 export type BridgeCommand = z.infer<typeof BridgeCommandSchema>;
 export type BridgeEvent = z.infer<typeof BridgeEventSchema>;
 export type RideUploadSummary = z.infer<typeof RideUploadSummarySchema>;

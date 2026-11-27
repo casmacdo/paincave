@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { BridgeCommand, FlattenedStep } from "@paincave/shared";
-import { LiveWorkoutChart, type LiveDataPoint } from "../components/LiveWorkoutChart.js";
+import { LiveWorkoutChart } from "../components/LiveWorkoutChart.js";
 import { PostRideModal } from "../components/PostRideModal.js";
 import { RouteElevationMap } from "../components/RouteElevationMap.js";
 import { playIntervalCueTone } from "../lib/audio-cues.js";
@@ -46,8 +46,17 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function getWorkoutTextCue(rawCue: string | null | undefined, state: string): string | null {
+  if (state === "idle" || !rawCue) return null;
+  const trimmed = rawCue.trim();
+  if (!trimmed) return null;
+  if (/^SIM Mode\s*\(\d+%\s*difficulty\)$/i.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
 export function RidePage({ snapshot, ftpWatts, sendCommand }: RidePageProps) {
-  const [history, setHistory] = useState<LiveDataPoint[]>([]);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [rescanning, setRescanning] = useState(false);
   const [manualGradePct, setManualGradePct] = useState(2.0);
@@ -63,12 +72,13 @@ export function RidePage({ snapshot, ftpWatts, sendCommand }: RidePageProps) {
   });
 
   const tel = snapshot.telemetry;
-  const state = tel?.state ?? "idle";
+  const state = tel?.state ?? (snapshot.loadedSteps.length > 0 || snapshot.loadedRoute ? "armed" : "idle");
   const isActive =
     state === "running" || state === "paused" || state === "auto_paused" || state === "completed";
-  const currentMode = tel?.mode ?? "erg";
+  const currentMode = tel?.mode ?? (snapshot.loadedRoute?.sim_mode ? "slope" : "erg");
   const biasPct = tel?.erg_bias_pct ?? 100;
   const activeGrade = tel?.target_grade_pct ?? manualGradePct;
+  const activeCue = getWorkoutTextCue(tel?.text_cue, state);
 
   const nextStep =
     tel && snapshot.loadedSteps.length > tel.step_index + 1
@@ -78,27 +88,8 @@ export function RidePage({ snapshot, ftpWatts, sendCommand }: RidePageProps) {
     state === "running" && tel !== null && tel.step_remaining_s > 0 && tel.step_remaining_s <= 15;
 
   useEffect(() => {
-    if (!tel) return;
-    if (tel.state === "idle") {
-      setHistory([]);
+    if (!tel || tel.state === "idle") {
       lastCueRef.current = { stepIndex: -1, remaining: null };
-      return;
-    }
-    if (tel.state === "running" || tel.state === "auto_paused") {
-      setHistory((prev) => {
-        const last = prev.at(-1);
-        if (last && last.t_s === tel.elapsed_s) return prev;
-        const next = [
-          ...prev,
-          {
-            t_s: tel.elapsed_s,
-            watts: tel.watts,
-            target_watts: tel.target_watts,
-            hr_bpm: tel.hr_bpm,
-          },
-        ];
-        return next.length > 7200 ? next.slice(-7200) : next;
-      });
     }
   }, [tel]);
 
@@ -182,7 +173,7 @@ export function RidePage({ snapshot, ftpWatts, sendCommand }: RidePageProps) {
               {state.replace("_", " ")}
             </span>
             <h1 className="text-xl font-bold text-white">
-              {tel?.workout_name ?? "Free Ride / Ready"}
+              {tel?.workout_name ?? snapshot.loadedWorkoutName ?? "Free Ride / Ready"}
             </h1>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-400">
@@ -254,9 +245,9 @@ export function RidePage({ snapshot, ftpWatts, sendCommand }: RidePageProps) {
       )}
 
       {/* Interval Cue Banner */}
-      {tel?.text_cue && (
+      {activeCue && (
         <div className="rounded-xl border border-orange-500/40 bg-orange-500/10 px-4 py-3 text-base font-medium text-orange-200">
-          Cue: {tel.text_cue}
+          Cue: {activeCue}
         </div>
       )}
 
@@ -341,7 +332,7 @@ export function RidePage({ snapshot, ftpWatts, sendCommand }: RidePageProps) {
       <LiveWorkoutChart
         steps={snapshot.loadedSteps}
         ftpWatts={ftpWatts}
-        liveHistory={history}
+        liveHistory={snapshot.liveHistory ?? []}
         elapsedS={tel?.elapsed_s ?? 0}
       />
 

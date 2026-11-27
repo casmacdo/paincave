@@ -6,6 +6,8 @@ interface TrainerMenuProps {
   active: boolean;
   activeSubTab: TrainerSubTab;
   bridgeConnected: boolean;
+  hasActiveSession?: boolean;
+  activeWorkoutName?: string | null;
   onSelect: (subTab: TrainerSubTab) => void;
 }
 
@@ -13,9 +15,11 @@ export function TrainerMenu({
   active,
   activeSubTab,
   bridgeConnected,
+  hasActiveSession = false,
+  activeWorkoutName = null,
   onSelect,
 }: TrainerMenuProps) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -74,6 +78,14 @@ export function TrainerMenu({
           }`}
         />
         <span>{t("nav.trainer_short")}</span>
+        {!active && hasActiveSession && (
+          <span
+            title={activeWorkoutName ?? undefined}
+            className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-300"
+          >
+            {locale === "fr-CA" ? "Chargé" : "Loaded"}
+          </span>
+        )}
         <span
           aria-hidden="true"
           className={`text-[10px] transition-transform ${open ? "rotate-180" : ""}`}

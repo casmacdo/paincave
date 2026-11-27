@@ -82,8 +82,12 @@ pub async fn start_bridge_service_with_options(
 
     let mut engine = WorkoutEngine::new(Arc::clone(&transport), store.clone(), upload_notify)
         .with_synthetic_route(options.synthetic_route);
+    let latest_session = Arc::new(RwLock::new(engine.session_state_event()));
+    let latest_telemetry = Arc::new(RwLock::new(None));
     let engine_event_tx = event_tx.clone();
     let engine_state = Arc::clone(&current_state);
+    let engine_latest_session = Arc::clone(&latest_session);
+    let engine_latest_telemetry = Arc::clone(&latest_telemetry);
     let tick_ms = (1000 / u64::from(time_scale.max(1))).max(5);
 
     tokio::spawn(async move {
@@ -93,6 +97,7 @@ pub async fn start_bridge_service_with_options(
                 Some(cmd) = cmd_rx.recv() => {
                     let events = engine.handle_command(cmd).await;
                     *engine_state.write().await = engine.state();
+                    *engine_latest_session.write().await = engine.session_state_event();
                     for ev in events {
                         let _ = engine_event_tx.send(ev);
                     }
@@ -100,6 +105,10 @@ pub async fn start_bridge_service_with_options(
                 _ = ticker.tick() => {
                     let ev = engine.tick_one_second().await;
                     *engine_state.write().await = engine.state();
+                    *engine_latest_telemetry.write().await = Some(ev.clone());
+                    if engine.state() != WorkoutExecutionState::Idle {
+                        *engine_latest_session.write().await = engine.session_state_event();
+                    }
                     let _ = engine_event_tx.send(ev);
                 }
             }
@@ -113,6 +122,8 @@ pub async fn start_bridge_service_with_options(
         store,
         allowed_origin,
         current_state,
+        latest_session,
+        latest_telemetry,
     };
 
     let router = build_router(server_state);

@@ -135,6 +135,14 @@ pub struct SensorStatus {
     pub transport: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveHistoryPoint {
+    pub t_s: u32,
+    pub watts: Option<u16>,
+    pub target_watts: Option<u16>,
+    pub hr_bpm: Option<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
@@ -154,6 +162,8 @@ pub enum BridgeEvent {
         target_watts: Option<u16>,
         target_grade_pct: Option<f64>,
         erg_bias_pct: u16,
+        #[serde(default)]
+        target_cadence_rpm: Option<u16>,
         watts: Option<u16>,
         watts_3s: Option<u16>,
         cadence_rpm: Option<u8>,
@@ -174,6 +184,14 @@ pub enum BridgeEvent {
         text_cue: Option<String>,
         sensors: SensorStatus,
         pending_uploads: usize,
+    },
+    SessionState {
+        workout_name: Option<String>,
+        steps: Vec<FlattenedStep>,
+        #[serde(default)]
+        route: Option<RoutePayload>,
+        #[serde(default)]
+        history: Vec<LiveHistoryPoint>,
     },
     RideSaved {
         ride_uuid: String,

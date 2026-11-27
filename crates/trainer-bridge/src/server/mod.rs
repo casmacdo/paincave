@@ -23,6 +23,8 @@ pub struct BridgeServerState {
     pub store: SqliteStore,
     pub allowed_origin: Option<String>,
     pub current_state: Arc<tokio::sync::RwLock<WorkoutExecutionState>>,
+    pub latest_session: Arc<tokio::sync::RwLock<BridgeEvent>>,
+    pub latest_telemetry: Arc<tokio::sync::RwLock<Option<BridgeEvent>>>,
 }
 
 #[derive(Serialize)]
@@ -103,8 +105,21 @@ async fn ws_handler(
 async fn handle_ws_connection(socket: WebSocket, state: BridgeServerState) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let mut event_rx = state.event_tx.subscribe();
+    let initial_session = state.latest_session.read().await.clone();
+    let initial_telemetry = state.latest_telemetry.read().await.clone();
 
     let send_task = tokio::spawn(async move {
+        if let Ok(text) = serde_json::to_string(&initial_session)
+            && ws_tx.send(Message::Text(text.into())).await.is_err()
+        {
+            return;
+        }
+        if let Some(tel) = initial_telemetry
+            && let Ok(text) = serde_json::to_string(&tel)
+            && ws_tx.send(Message::Text(text.into())).await.is_err()
+        {
+            return;
+        }
         while let Ok(ev) = event_rx.recv().await {
             let Ok(text) = serde_json::to_string(&ev) else {
                 continue;

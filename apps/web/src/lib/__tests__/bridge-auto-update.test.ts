@@ -75,11 +75,13 @@ describe("BridgeClient", () => {
 
   beforeEach(() => {
     sockets = [];
+    window.sessionStorage.clear();
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", MockWebSocket);
   });
 
   afterEach(() => {
+    window.sessionStorage.clear();
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
@@ -121,6 +123,7 @@ describe("BridgeClient", () => {
       pending_uploads: 0,
     });
     expect(client.getSnapshot().telemetry?.watts_3s).toBe(180);
+    expect(client.getSnapshot().liveHistory).toHaveLength(1);
 
     // Simulate disconnect and verify backoff reconnect
     sockets[0]?.close();
@@ -128,5 +131,71 @@ describe("BridgeClient", () => {
     vi.advanceTimersByTime(600);
     expect(sockets).toHaveLength(2);
     client.disconnect();
+  });
+
+  it("persists loaded workout/route/history across page reloads, hydrates from session_state, and queues offline loads", () => {
+    const url = "ws://127.0.0.1:8765/ws";
+    const client1 = new BridgeClient(url);
+
+    // Send load_workout while disconnected -> queued and persisted optimistically
+    const sentImmediately = client1.send({
+      type: "load_workout",
+      name: "Threshold 2x12",
+      ftp_watts: 260,
+      steps: [
+        {
+          step_index: 0,
+          label: "Work",
+          start_offset_s: 0,
+          duration_s: 720,
+          mode: "erg",
+          watts_start: 245,
+          watts_end: 245,
+          grade_pct: null,
+          resistance_pct: null,
+          cadence_rpm: 90,
+          text_cue: null,
+          is_work_interval: true,
+        },
+      ],
+      route: null,
+    });
+    expect(sentImmediately).toBe(false);
+    expect(client1.getSnapshot().loadedWorkoutName).toBe("Threshold 2x12");
+    expect(client1.getSnapshot().loadedSteps).toHaveLength(1);
+
+    // New client instance (simulating page reload) restores loaded workout immediately
+    const client2 = new BridgeClient(url);
+    expect(client2.getSnapshot().loadedWorkoutName).toBe("Threshold 2x12");
+    expect(client2.getSnapshot().loadedSteps).toHaveLength(1);
+
+    // Authoritative session_state from bridge updates steps/route/history and clears on discard
+    client2.connect();
+    sockets[0]?.triggerOpen();
+    sockets[0]?.triggerMessage({
+      type: "session_state",
+      workout_name: "Montreal Route (SIM)",
+      steps: [],
+      route: {
+        name: "Montreal Route",
+        points: [
+          { lat_deg: 45.5, lon_deg: -73.6, elevation_m: 30 },
+          { lat_deg: 45.51, lon_deg: -73.6, elevation_m: 80 },
+        ],
+        loop_route: true,
+        sim_mode: true,
+        trainer_difficulty_pct: 100,
+      },
+      history: [{ t_s: 1, watts: 210, target_watts: null, hr_bpm: 140 }],
+    });
+    expect(client2.getSnapshot().loadedWorkoutName).toBe("Montreal Route (SIM)");
+    expect(client2.getSnapshot().loadedRoute?.name).toBe("Montreal Route");
+    expect(client2.getSnapshot().liveHistory).toHaveLength(1);
+
+    client2.send({ type: "discard" });
+    expect(client2.getSnapshot().loadedWorkoutName).toBeNull();
+    expect(client2.getSnapshot().loadedRoute).toBeNull();
+    expect(client2.getSnapshot().liveHistory).toEqual([]);
+    client2.disconnect();
   });
 });

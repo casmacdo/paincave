@@ -22,10 +22,35 @@ export const APP_NAME = "PainCave";
 
 type CoreTabKey = "overview" | "calendar" | "workouts" | "trends" | "settings" | "trainer";
 
+function parseLocationHash(): { tab: CoreTabKey; trainerSubTab: TrainerSubTab } {
+  if (typeof window === "undefined") {
+    return { tab: "overview", trainerSubTab: "ride" };
+  }
+  const raw = window.location.hash.replace(/^#/, "").trim().toLowerCase();
+  if (raw === "calendar" || raw === "workouts" || raw === "trends" || raw === "settings") {
+    return { tab: raw, trainerSubTab: "ride" };
+  }
+  if (raw === "trainer" || raw === "trainer/ride") {
+    return { tab: "trainer", trainerSubTab: "ride" };
+  }
+  if (raw === "trainer/routes") {
+    return { tab: "trainer", trainerSubTab: "routes" };
+  }
+  if (raw === "trainer/bridge") {
+    return { tab: "trainer", trainerSubTab: "bridge" };
+  }
+  return { tab: "overview", trainerSubTab: "ride" };
+}
+
+function buildLocationHash(tab: CoreTabKey, trainerSubTab: TrainerSubTab): string {
+  return tab === "trainer" ? `#trainer/${trainerSubTab}` : `#${tab}`;
+}
+
 function AppShell() {
   const { locale, setLocale, t } = useI18n();
-  const [tab, setTab] = useState<CoreTabKey>("overview");
-  const [trainerSubTab, setTrainerSubTab] = useState<TrainerSubTab>("ride");
+  const initialNav = useMemo(() => parseLocationHash(), []);
+  const [tab, setTab] = useState<CoreTabKey>(initialNav.tab);
+  const [trainerSubTab, setTrainerSubTab] = useState<TrainerSubTab>(initialNav.trainerSubTab);
   const [authChecked, setAuthChecked] = useState(false);
   const [authState, setAuthState] = useState<AuthState>({
     authenticated: false,
@@ -89,6 +114,25 @@ function AppShell() {
   useEffect(() => {
     void refreshAuthState();
   }, [refreshAuthState]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !authState.authenticated) return;
+    const nextHash = buildLocationHash(tab, trainerSubTab);
+    if (window.location.hash !== nextHash) {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+    }
+  }, [authState.authenticated, tab, trainerSubTab]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleHashChange = () => {
+      const parsed = parseLocationHash();
+      setTab(parsed.tab);
+      setTrainerSubTab(parsed.trainerSubTab);
+    };
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
 
   const handleSignOut = async () => {
     await api.logout().catch(() => {});
@@ -160,6 +204,15 @@ function AppShell() {
     ["settings", t("nav.settings")],
   ];
 
+  const activeWorkoutName =
+    bridgeSnapshot.telemetry?.workout_name ?? bridgeSnapshot.loadedWorkoutName ?? null;
+  const hasActiveSession = Boolean(
+    (bridgeSnapshot.telemetry && bridgeSnapshot.telemetry.state !== "idle") ||
+      bridgeSnapshot.loadedSteps.length > 0 ||
+      bridgeSnapshot.loadedRoute ||
+      bridgeSnapshot.loadedWorkoutName
+  );
+
   const handleOpenTrainerSubTab = (subTab: TrainerSubTab) => {
     setTrainerSubTab(subTab);
     setTab("trainer");
@@ -201,6 +254,8 @@ function AppShell() {
               active={tab === "trainer"}
               activeSubTab={trainerSubTab}
               bridgeConnected={bridgeSnapshot.connected}
+              hasActiveSession={hasActiveSession}
+              activeWorkoutName={activeWorkoutName}
               onSelect={handleOpenTrainerSubTab}
             />
 

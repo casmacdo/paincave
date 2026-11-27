@@ -9,8 +9,8 @@ use crate::engine::erg_guard::{ErgGuard, ErgGuardOutcome};
 use crate::fit::encoder::encode_cycling_fit;
 use crate::physiology::compute_ride_metrics;
 use crate::protocol::{
-    BridgeCommand, BridgeEvent, FlattenedStep, RideUploadSummary, TelemetrySample, UploadStatus,
-    WorkoutExecutionState, WorkoutStepMode,
+    BridgeCommand, BridgeEvent, FlattenedStep, LiveHistoryPoint, RideUploadSummary, RoutePayload,
+    TelemetrySample, UploadStatus, WorkoutExecutionState, WorkoutStepMode,
 };
 use crate::route::{SyntheticRoute, SyntheticRoutePosition};
 use crate::storage::sqlite::SqliteStore;
@@ -69,6 +69,7 @@ pub struct WorkoutEngine {
     session_route_active: bool,
     route_sim_mode: bool,
     route_trainer_difficulty_pct: u8,
+    loaded_route_payload: Option<RoutePayload>,
     synthetic_route: SyntheticRoute,
     last_route_position: Option<SyntheticRoutePosition>,
 }
@@ -107,6 +108,7 @@ impl WorkoutEngine {
             session_route_active: false,
             route_sim_mode: false,
             route_trainer_difficulty_pct: 100,
+            loaded_route_payload: None,
             synthetic_route: SyntheticRoute::default(),
             last_route_position: None,
         }
@@ -120,8 +122,32 @@ impl WorkoutEngine {
         self.session_route_active = false;
         self.route_sim_mode = false;
         self.route_trainer_difficulty_pct = 100;
+        self.loaded_route_payload = None;
         self.synthetic_route = SyntheticRoute::default();
         self.last_route_position = None;
+    }
+
+    pub fn session_state_event(&self) -> BridgeEvent {
+        let start = self.samples.len().saturating_sub(7200);
+        let history = self.samples[start..]
+            .iter()
+            .map(|s| LiveHistoryPoint {
+                t_s: s.t_s,
+                watts: s.watts,
+                target_watts: s.target_watts,
+                hr_bpm: s.hr_bpm,
+            })
+            .collect();
+        BridgeEvent::SessionState {
+            workout_name: if self.state == WorkoutExecutionState::Idle {
+                None
+            } else {
+                Some(self.meta.name.clone())
+            },
+            steps: self.steps.clone(),
+            route: self.loaded_route_payload.clone(),
+            history,
+        }
     }
 
     pub fn with_synthetic_route(mut self, enabled: bool) -> Self {
@@ -311,11 +337,13 @@ impl WorkoutEngine {
                     return events;
                 }
                 let parsed_route = if let Some(payload) = route {
+                    let route_copy = payload.clone();
                     match SyntheticRoute::from_points(payload.points, payload.loop_route) {
                         Ok(built) => Some((
                             built,
                             payload.sim_mode,
                             payload.trainer_difficulty_pct.clamp(10, 100),
+                            route_copy,
                         )),
                         Err(err) => {
                             events.push(BridgeEvent::Error {
@@ -330,11 +358,12 @@ impl WorkoutEngine {
                 };
 
                 self.reset_session();
-                if let Some((built, sim_mode, difficulty)) = parsed_route {
+                if let Some((built, sim_mode, difficulty, route_copy)) = parsed_route {
                     self.synthetic_route = built;
                     self.session_route_active = true;
                     self.route_sim_mode = sim_mode;
                     self.route_trainer_difficulty_pct = difficulty;
+                    self.loaded_route_payload = Some(route_copy);
                 } else {
                     self.clear_session_route();
                 }
@@ -349,6 +378,7 @@ impl WorkoutEngine {
                 };
                 self.steps = steps;
                 self.state = WorkoutExecutionState::Armed;
+                events.push(self.session_state_event());
             }
             BridgeCommand::LoadRoute {
                 name,
@@ -371,6 +401,7 @@ impl WorkoutEngine {
                     });
                     return events;
                 }
+                let route_copy = route.clone();
                 let built = match SyntheticRoute::from_points(route.points, route.loop_route) {
                     Ok(built) => built,
                     Err(err) => {
@@ -386,6 +417,7 @@ impl WorkoutEngine {
                 self.session_route_active = true;
                 self.route_sim_mode = route.sim_mode;
                 self.route_trainer_difficulty_pct = route.trainer_difficulty_pct.clamp(10, 100);
+                self.loaded_route_payload = Some(route_copy);
                 self.meta = ActiveWorkoutMeta {
                     workout_id: None,
                     planned_session_id: None,
@@ -407,10 +439,7 @@ impl WorkoutEngine {
                         grade_pct: Some(0.0),
                         resistance_pct: None,
                         cadence_rpm: None,
-                        text_cue: Some(format!(
-                            "SIM Mode ({}% difficulty)",
-                            self.route_trainer_difficulty_pct
-                        )),
+                        text_cue: None,
                         is_work_interval: false,
                     }
                 } else {
@@ -432,6 +461,7 @@ impl WorkoutEngine {
                 };
                 self.steps = vec![step];
                 self.state = WorkoutExecutionState::Armed;
+                events.push(self.session_state_event());
             }
             BridgeCommand::Start => {
                 if matches!(
@@ -474,6 +504,7 @@ impl WorkoutEngine {
                     self.ride_uuid = Some(uuid);
                     self.started_at = Some(now);
                     self.state = WorkoutExecutionState::Running;
+                    events.push(self.session_state_event());
                 }
             }
             BridgeCommand::Pause => {
@@ -519,6 +550,7 @@ impl WorkoutEngine {
                 if let Some(step) = self.steps.get_mut(self.step_index) {
                     let updated = i64::from(step.duration_s) + i64::from(seconds);
                     step.duration_s = updated.max(i64::from(self.step_elapsed_s) + 5) as u32;
+                    events.push(self.session_state_event());
                 }
             }
             BridgeCommand::SetErgBias { bias_pct } => {
@@ -619,6 +651,7 @@ impl WorkoutEngine {
                 self.clear_session_route();
                 self.steps.clear();
                 self.state = WorkoutExecutionState::Idle;
+                events.push(self.session_state_event());
             }
             BridgeCommand::Discard => {
                 if let Some(uuid) = &self.ride_uuid {
@@ -628,6 +661,7 @@ impl WorkoutEngine {
                 self.clear_session_route();
                 self.steps.clear();
                 self.state = WorkoutExecutionState::Idle;
+                events.push(self.session_state_event());
             }
             BridgeCommand::InjectMockFault {
                 cadence_zero_seconds,
@@ -816,6 +850,7 @@ impl WorkoutEngine {
             target_watts,
             target_grade_pct: target_grade,
             erg_bias_pct: self.erg_bias_pct,
+            target_cadence_rpm: cur_step.and_then(|s| s.cadence_rpm),
             watts: raw.watts,
             watts_3s,
             cadence_rpm: raw.cadence_rpm,
@@ -893,7 +928,8 @@ mod tests {
                 route: None,
             })
             .await;
-        assert!(load_events.is_empty());
+        assert_eq!(load_events.len(), 1);
+        assert!(matches!(load_events[0], BridgeEvent::SessionState { .. }));
         assert_eq!(engine.state(), WorkoutExecutionState::Armed);
 
         engine.handle_command(BridgeCommand::Start).await;
@@ -909,6 +945,7 @@ mod tests {
                 elevation_m,
                 distance_m,
                 grade_pct,
+                target_cadence_rpm,
                 ..
             } = event
             {
@@ -918,6 +955,7 @@ mod tests {
                 assert!(elevation_m.is_none());
                 assert!(distance_m.is_none());
                 assert!(grade_pct.is_none());
+                assert_eq!(target_cadence_rpm, Some(90));
             } else {
                 anyhow::bail!("expected telemetry event");
             }
@@ -956,8 +994,15 @@ mod tests {
                 notes: Some("Clean recovery".to_string()),
             })
             .await;
-        assert_eq!(save_events.len(), 1);
+        assert_eq!(save_events.len(), 2);
         assert!(matches!(save_events[0], BridgeEvent::RideSaved { .. }));
+        assert!(matches!(
+            save_events[1],
+            BridgeEvent::SessionState {
+                workout_name: None,
+                ..
+            }
+        ));
         assert_eq!(store.pending_upload_count()?, 1);
         Ok(())
     }
@@ -1074,7 +1119,11 @@ mod tests {
                 },
             })
             .await;
-        assert!(load_events.is_empty());
+        assert_eq!(load_events.len(), 1);
+        assert!(matches!(
+            load_events[0],
+            BridgeEvent::SessionState { route: Some(_), .. }
+        ));
         assert_eq!(engine.state(), WorkoutExecutionState::Armed);
 
         engine.handle_command(BridgeCommand::Start).await;
@@ -1094,6 +1143,7 @@ mod tests {
             target_grade_pct,
             grade_pct,
             elevation_m,
+            text_cue,
             ..
         } = ev
         {
@@ -1102,6 +1152,7 @@ mod tests {
             assert!((target_grade_pct.unwrap_or(0.0) - 4.0).abs() <= 0.2);
             assert!((grade_pct.unwrap_or(0.0) - 8.0).abs() <= 0.3);
             assert!(elevation_m.unwrap_or(0.0) > 1000.0);
+            assert_eq!(text_cue, None);
         } else {
             anyhow::bail!("expected SIM mode telemetry");
         }

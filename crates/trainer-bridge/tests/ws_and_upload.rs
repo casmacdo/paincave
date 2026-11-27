@@ -157,6 +157,28 @@ async fn websocket_workout_control_and_upload_retry_recovery() -> anyhow::Result
     }
     assert!(saw_running_elapsed);
 
+    // Reconnecting/opening a second WebSocket client mid-ride immediately replays SessionState
+    let (mut ws2, _) = tokio_tungstenite::connect_async(&ws_url).await?;
+    let mut replayed_session = false;
+    if let Some(Ok(Message::Text(txt))) = ws2.next().await
+        && let Ok(BridgeEvent::SessionState {
+            workout_name,
+            steps,
+            history,
+            ..
+        }) = serde_json::from_str::<BridgeEvent>(&txt)
+    {
+        assert_eq!(workout_name.as_deref(), Some("WS Integration Ride"));
+        assert_eq!(steps.len(), 1);
+        assert!(!history.is_empty());
+        replayed_session = true;
+    }
+    assert!(
+        replayed_session,
+        "Expected reconnecting client to immediately receive SessionState"
+    );
+    drop(ws2);
+
     ws.send(Message::Text(
         serde_json::to_string(&BridgeCommand::StopAndSave {
             rpe: Some(6),
