@@ -20,6 +20,7 @@ import {
 } from "@paincave/shared";
 import { api, type WorkoutRecord } from "../lib/api.js";
 import { WorkoutProfileSvg } from "../components/LiveWorkoutChart.js";
+import { useI18n } from "../lib/i18n.js";
 
 interface WorkoutsPageProps {
   ftpWatts: number;
@@ -226,6 +227,7 @@ export function WorkoutsPage({
   indoorTrainerEnabled = true,
   onLoadWorkout,
 }: WorkoutsPageProps) {
+  const { t } = useI18n();
   const [workouts, setWorkouts] = useState<WorkoutRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -639,7 +641,7 @@ export function WorkoutsPage({
                 onClick={() => openScheduleModal(w)}
                 className="rounded-lg border border-zinc-700 bg-zinc-800/80 px-2.5 py-2 text-xs font-semibold text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800 hover:text-white"
               >
-                Schedule
+                {t("workouts.schedule")}
               </button>
               {sport === "cycling" && indoorTrainerEnabled && (
                 <button
@@ -648,7 +650,7 @@ export function WorkoutsPage({
                   disabled={loadingWorkoutId === w.id}
                   className="rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {loadingWorkoutId === w.id ? "Loading..." : "Load on Trainer"}
+                  {loadingWorkoutId === w.id ? t("workouts.loading") : t("workouts.load_trainer")}
                 </button>
               )}
             </div>
@@ -827,13 +829,13 @@ export function WorkoutsPage({
       {/* Header & Controls */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Workout Library</h1>
+          <h1 className="text-2xl font-bold text-white">{t("workouts.title")}</h1>
           <p className="mt-0.5 text-sm text-zinc-400">
             {loading
-              ? "Loading library..."
+              ? t("workouts.loading")
               : hasActiveFilters
-                ? `Showing ${filteredAndSorted.length} of ${workouts.length} workouts`
-                : `${workouts.length} ${workouts.length === 1 ? "workout" : "workouts"} across ${categorySummaries.length} ${categorySummaries.length === 1 ? "category" : "categories"}`}
+                ? `${filteredAndSorted.length} / ${workouts.length}`
+                : `${workouts.length} ${workouts.length === 1 ? "workout" : "workouts"} · ${categorySummaries.length}`}
           </p>
         </div>
 
@@ -853,14 +855,14 @@ export function WorkoutsPage({
             onClick={() => fileInputRef.current?.click()}
             className="rounded-lg border border-orange-500/40 bg-orange-500/15 px-3 py-1.5 text-sm font-semibold text-orange-200 hover:bg-orange-500/25 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {importing ? "Importing..." : "Import .zwo / .erg / .mrc"}
+            {importing ? t("workouts.loading") : t("workouts.import_btn")}
           </button>
 
           <input
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, notes, category..."
+            placeholder={t("workouts.search_placeholder")}
             aria-label="Search workouts"
             className="w-56 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-white placeholder:text-zinc-500 focus:border-orange-500 focus:outline-none"
           />
@@ -894,7 +896,7 @@ export function WorkoutsPage({
                   : "text-zinc-400 hover:text-white"
               }`}
             >
-              Grouped
+              {t("workouts.grouped")}
             </button>
             <button
               type="button"
@@ -906,7 +908,7 @@ export function WorkoutsPage({
                   : "text-zinc-400 hover:text-white"
               }`}
             >
-              All Cards
+              {t("workouts.flat")}
             </button>
           </div>
         </div>
@@ -939,7 +941,7 @@ export function WorkoutsPage({
                         : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700 hover:text-white"
                     }`}
                   >
-                    {sp === "all" ? "All Sports" : SPORT_BADGE_META[sp].label}
+                    {sp === "all" ? t("sport.all") : t(`sport.${sp}`)}
                     <span className="rounded-full bg-zinc-950/30 px-1.5 text-[10px] tabular-nums">
                       {count}
                     </span>
@@ -1025,7 +1027,7 @@ export function WorkoutsPage({
                 onClick={resetFilters}
                 className="text-xs font-medium text-orange-400 hover:text-orange-300"
               >
-                Reset filters
+                {t("workouts.reset_filters")}
               </button>
             )}
           </div>

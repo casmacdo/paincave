@@ -218,22 +218,41 @@ async function getValidGarminJwt(env: AppEnv, userId: string): Promise<string | 
 export interface GarminSyncResult {
   ok: boolean;
   rate_limited: boolean;
+  retry_after_s: number | null;
+  start_date: string;
+  end_date: string;
   activities_imported: number;
   activities_skipped: number;
   biometrics_upserted: number;
   error: string | null;
 }
 
+function diffDaysInclusive(startDay: string, endDay: string): number {
+  const s = Date.parse(`${startDay}T00:00:00Z`);
+  const e = Date.parse(`${endDay}T00:00:00Z`);
+  if (!Number.isFinite(s) || !Number.isFinite(e) || e < s) return 0;
+  return Math.floor((e - s) / 86_400_000) + 1;
+}
+
 export async function syncGarminUser(
   env: AppEnv,
   userId: string,
-  opts: { days?: number } = {}
+  opts: {
+    days?: number;
+    startDate?: string;
+    endDate?: string;
+    skipPmcRecompute?: boolean;
+  } = {}
 ): Promise<GarminSyncResult> {
+  const today = todayUtcDay();
   const status = await getGarminStatus(env, userId);
   if (!status.connected) {
     return {
       ok: false,
       rate_limited: false,
+      retry_after_s: null,
+      start_date: today,
+      end_date: today,
       activities_imported: 0,
       activities_skipped: 0,
       biometrics_upserted: 0,
@@ -241,9 +260,22 @@ export async function syncGarminUser(
     };
   }
 
-  const today = todayUtcDay();
-  const lookbackDays = Math.min(30, Math.max(1, opts.days ?? (status.last_sync_at ? 3 : 14)));
-  const startDay = shiftDay(today, -(lookbackDays - 1));
+  let startDay: string;
+  let endDay: string;
+  if (opts.startDate && opts.endDate) {
+    startDay = opts.startDate <= opts.endDate ? opts.startDate : opts.endDate;
+    endDay = opts.endDate >= opts.startDate ? opts.endDate : opts.startDate;
+    if (endDay > today) endDay = today;
+    if (startDay > endDay) startDay = endDay;
+    const span = diffDaysInclusive(startDay, endDay);
+    if (span > 31) {
+      startDay = shiftDay(endDay, -30);
+    }
+  } else {
+    const lookbackDays = Math.min(31, Math.max(1, opts.days ?? (status.last_sync_at ? 3 : 14)));
+    endDay = today;
+    startDay = shiftDay(today, -(lookbackDays - 1));
+  }
 
   let imported = 0;
   let skipped = 0;
@@ -256,6 +288,9 @@ export async function syncGarminUser(
       return {
         ok: false,
         rate_limited: false,
+        retry_after_s: null,
+        start_date: startDay,
+        end_date: endDay,
         activities_imported: 0,
         activities_skipped: 0,
         biometrics_upserted: 0,
@@ -263,7 +298,7 @@ export async function syncGarminUser(
       };
     }
 
-    const activities = await fetchGarminActivities(jwt, startDay, today);
+    const activities = await fetchGarminActivities(jwt, startDay, endDay);
 
     for (const act of activities) {
       // Skip already imported activities before downloading FIT
@@ -454,12 +489,12 @@ export async function syncGarminUser(
       }
     }
 
-    if (earliestNewDay) {
+    if (earliestNewDay && !opts.skipPmcRecompute) {
       await recomputePmcFromDay(env.DB, earliestNewDay, userId);
     }
 
-    const bioStart = shiftDay(today, -Math.min(lookbackDays - 1, 6));
-    const bioRows = await fetchGarminDailyBiometrics(jwt, bioStart, today);
+    const bioStart = opts.startDate ? startDay : shiftDay(endDay, -Math.min(diffDaysInclusive(startDay, endDay) - 1, 6));
+    const bioRows = await fetchGarminDailyBiometrics(jwt, bioStart, endDay);
     biometricsCount = await upsertDailyBiometrics(env.DB, userId, bioRows, "garmin_personal");
 
     await env.DB.prepare(
@@ -475,6 +510,9 @@ export async function syncGarminUser(
     return {
       ok: true,
       rate_limited: false,
+      retry_after_s: null,
+      start_date: startDay,
+      end_date: endDay,
       activities_imported: imported,
       activities_skipped: skipped,
       biometrics_upserted: biometricsCount,
@@ -482,6 +520,7 @@ export async function syncGarminUser(
     };
   } catch (err) {
     const isRateLimit = err instanceof GarminRateLimitError;
+    const retryAfterS = err instanceof GarminRateLimitError ? err.retryAfterSeconds : null;
     const msg = (err instanceof Error ? err.message : String(err)).slice(0, 400);
     await env.DB.prepare(
       `UPDATE provider_connections
@@ -501,6 +540,9 @@ export async function syncGarminUser(
     return {
       ok: false,
       rate_limited: isRateLimit,
+      retry_after_s: retryAfterS,
+      start_date: startDay,
+      end_date: endDay,
       activities_imported: imported,
       activities_skipped: skipped,
       biometrics_upserted: biometricsCount,

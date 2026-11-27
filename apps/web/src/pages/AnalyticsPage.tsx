@@ -14,12 +14,21 @@ import {
   type RideTimeseriesPoint,
 } from "../components/AnalyticsCharts.js";
 import { downloadRideSummaryPng } from "../lib/workout-summary-card.js";
+import { useI18n } from "../lib/i18n.js";
 
 interface AnalyticsPageProps {
   thresholds: AthleteThreshold | null;
 }
 
+function formatPace(secPerKm: number | null | undefined): string {
+  if (!secPerKm || secPerKm <= 0) return "--";
+  const mins = Math.floor(secPerKm / 60);
+  const secs = Math.round(secPerKm % 60);
+  return `${mins}:${String(secs).padStart(2, "0")}/km`;
+}
+
 export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
+  const { t } = useI18n();
   const [rangeDays, setRangeDays] = useState<42 | 90>(42);
   const [overview, setOverview] = useState<FitnessOverviewResponse | null>(null);
   const [biometrics, setBiometrics] = useState<Awaited<ReturnType<typeof api.getBiometrics>>>(null);
@@ -174,10 +183,17 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
     }
   };
 
+  const hasPowerData = Boolean(
+    overview &&
+      (overview.mmp_42d.length > 0 ||
+        overview.mmp_90d.length > 0 ||
+        overview.cp_estimate_42d !== null)
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold text-white">Fitness & Ride Analytics</h1>
+        <h1 className="text-2xl font-bold text-white">{t("trends.title")}</h1>
         <div className="flex flex-wrap items-center gap-2">
           <div
             role="group"
@@ -202,7 +218,7 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
           </div>
 
           <label className="cursor-pointer rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2 text-xs font-semibold text-zinc-200 hover:bg-zinc-800">
-            Upload Outdoor .FIT
+            {t("trends.upload_fit")}
             <input
               type="file"
               accept=".fit"
@@ -229,19 +245,19 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
       {biometrics && biometrics.summary.latest && (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            <div className="text-xs text-zinc-400">HRV (7d Avg)</div>
+            <div className="text-xs text-zinc-400">{t("overview.hrv_7d")}</div>
             <div className="mt-1 text-2xl font-bold text-emerald-400">
               {biometrics.summary.hrv_7d_avg !== null ? `${biometrics.summary.hrv_7d_avg} ms` : "—"}
             </div>
             {biometrics.summary.hrv_delta_pct !== null && (
               <div className="mt-0.5 text-[11px] text-zinc-500">
                 {biometrics.summary.hrv_delta_pct >= 0 ? "+" : ""}
-                {biometrics.summary.hrv_delta_pct}% vs baseline
+                {biometrics.summary.hrv_delta_pct}% {t("overview.vs_baseline")}
               </div>
             )}
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            <div className="text-xs text-zinc-400">Resting HR (7d)</div>
+            <div className="text-xs text-zinc-400">{t("overview.rhr_7d")}</div>
             <div className="mt-1 text-2xl font-bold text-sky-400">
               {biometrics.summary.resting_hr_7d_avg !== null
                 ? `${biometrics.summary.resting_hr_7d_avg} bpm`
@@ -249,7 +265,7 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
             </div>
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            <div className="text-xs text-zinc-400">Sleep (7d Avg)</div>
+            <div className="text-xs text-zinc-400">{t("overview.sleep_7d")}</div>
             <div className="mt-1 text-2xl font-bold text-indigo-300">
               {biometrics.summary.sleep_hours_7d_avg !== null
                 ? `${biometrics.summary.sleep_hours_7d_avg} h`
@@ -257,12 +273,12 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
             </div>
             {biometrics.summary.sleep_score_7d_avg !== null && (
               <div className="mt-0.5 text-[11px] text-zinc-500">
-                Score {biometrics.summary.sleep_score_7d_avg}/100
+                {t("overview.sleep_score")} {biometrics.summary.sleep_score_7d_avg}/100
               </div>
             )}
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            <div className="text-xs text-zinc-400">Body Battery Peak</div>
+            <div className="text-xs text-zinc-400">{t("overview.body_battery")}</div>
             <div className="mt-1 text-2xl font-bold text-orange-400">
               {biometrics.summary.latest.body_battery_high !== null
                 ? `${biometrics.summary.latest.body_battery_high}`
@@ -275,57 +291,61 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
 
       {/* PMC Summary Cards */}
       {overview && (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+        <div className={`grid grid-cols-2 gap-4 ${hasPowerData ? "md:grid-cols-5" : "md:grid-cols-4"}`}>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            <div className="text-xs text-zinc-400">CTL (Fitness)</div>
+            <div className="text-xs text-zinc-400">{t("overview.ctl")}</div>
             <div className="mt-1 text-2xl font-bold text-sky-400">{overview.current_pmc.ctl}</div>
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            <div className="text-xs text-zinc-400">ATL (Fatigue)</div>
+            <div className="text-xs text-zinc-400">{t("overview.atl")}</div>
             <div className="mt-1 text-2xl font-bold text-rose-400">{overview.current_pmc.atl}</div>
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            <div className="text-xs text-zinc-400">TSB (Form)</div>
+            <div className="text-xs text-zinc-400">{t("overview.tsb")}</div>
             <div className="mt-1 text-2xl font-bold text-emerald-400">{overview.current_pmc.tsb}</div>
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            <div className="text-xs text-zinc-400">7d Ramp Rate</div>
+            <div className="text-xs text-zinc-400">{t("overview.ramp_7d")}</div>
             <div className="mt-1 text-2xl font-bold text-white">
               {overview.current_pmc.ramp_rate_7d}
             </div>
           </div>
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            <div className="text-xs text-zinc-400">Est. CP / W&apos;</div>
-            <div className="mt-1 text-lg font-bold text-orange-400">
-              {overview.cp_estimate_42d
-                ? `${overview.cp_estimate_42d.cp_watts}W / ${Math.round(overview.cp_estimate_42d.w_prime_j / 1000)}kJ`
-                : "--"}
+          {hasPowerData && (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+              <div className="text-xs text-zinc-400">Est. CP / W&apos;</div>
+              <div className="mt-1 text-lg font-bold text-orange-400">
+                {overview.cp_estimate_42d
+                  ? `${overview.cp_estimate_42d.cp_watts}W / ${Math.round(overview.cp_estimate_42d.w_prime_j / 1000)}kJ`
+                  : "--"}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
-      {/* Visual PMC + Power Curve + Weekly Load Charts */}
+      {/* Visual PMC + Conditional Power Curve + Weekly Load Charts */}
       {overview && (
         <div className="space-y-4">
           <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-400">
-              Performance Management Chart ({rangeDays} Days)
+              {t("trends.pmc_title")} ({rangeDays}d)
             </h2>
             <PmcChart data={overview.daily_pmc} />
           </section>
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-400">
-                Mean Maximal Power Curve (42d vs 90d)
-              </h2>
-              <MmpCurveChart mmp42={overview.mmp_42d} mmp90={overview.mmp_90d} />
-            </section>
+          <div className={`grid gap-4 ${hasPowerData ? "lg:grid-cols-2" : ""}`}>
+            {hasPowerData && (
+              <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+                <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-400">
+                  {t("trends.mmp_title")}
+                </h2>
+                <MmpCurveChart mmp42={overview.mmp_42d} mmp90={overview.mmp_90d} />
+              </section>
+            )}
 
             <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-400">
-                Weekly Training Load (TSS &amp; Hours)
+                {t("trends.weekly_title")}
               </h2>
               <WeeklyLoadChart weeks={overview.weekly_rollups} />
             </section>
@@ -333,11 +353,11 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
         </div>
       )}
 
-      {/* Recent Rides + Detail Inspection */}
+      {/* Recent Activities + Detail Inspection */}
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="space-y-2">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
-            Recent Rides
+            {t("trends.recent_activities")}
           </h2>
           {rides.map((r) => {
             const isSelected = selectedDetail?.ride.ride_uuid === r.ride_uuid;
@@ -358,9 +378,9 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
                     <span className="shrink-0 text-xs font-mono text-zinc-400">{r.ride_day}</span>
                   </div>
                   <div className="mt-1 text-xs text-zinc-400">
-                    {Math.round(r.duration_s / 60)}m · NP {r.np_watts ?? "--"}W · IF{" "}
-                    {r.intensity_factor ?? "--"} · TSS {Math.round(r.tss)} · Pw:HR{" "}
-                    {r.pw_hr_decoupling !== null ? `${r.pw_hr_decoupling}%` : "--"}
+                    {r.sport === "running"
+                      ? `${Math.round(r.duration_s / 60)}m · ${r.distance_m ? `${(r.distance_m / 1000).toFixed(1)} km` : "--"} · ${formatPace(r.avg_pace_s_per_km)} · TSS ${Math.round(r.tss)} · HR ${r.avg_hr ?? "--"}`
+                      : `${Math.round(r.duration_s / 60)}m · NP ${r.np_watts ?? "--"}W · IF ${r.intensity_factor ?? "--"} · TSS ${Math.round(r.tss)} · Pw:HR ${r.pw_hr_decoupling !== null ? `${r.pw_hr_decoupling}%` : "--"}`}
                   </div>
                 </button>
                 <button
@@ -369,7 +389,7 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
                   disabled={deletingRideUuid === r.ride_uuid}
                   className="self-center rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-300 hover:border-rose-400 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {deletingRideUuid === r.ride_uuid ? "Deleting..." : "Delete"}
+                  {deletingRideUuid === r.ride_uuid ? t("workouts.deleting") : t("workouts.delete")}
                 </button>
               </div>
             );
@@ -378,13 +398,10 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
 
         <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
-            Ride &amp; Interval Detail
+            {t("trends.activity_detail")}
           </h2>
           {!selectedDetail ? (
-            <p className="mt-3 text-sm text-zinc-500">
-              Select a ride to inspect its Power/HR chart, per-interval compliance, summary PNG card,
-              and Strava sync status.
-            </p>
+            <p className="mt-3 text-sm text-zinc-500">{t("trends.select_prompt")}</p>
           ) : (
             <div className="mt-3 space-y-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -408,7 +425,7 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
                     }}
                     className="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-700"
                   >
-                    Download Summary PNG
+                    {t("trends.download_png")}
                   </button>
                   <a
                     href={`/api/rides/${encodeURIComponent(selectedDetail.ride.ride_uuid)}/fit`}
@@ -426,7 +443,7 @@ export function AnalyticsPage({ thresholds }: AnalyticsPageProps) {
                     >
                       {retryingStravaUuid === selectedDetail.ride.ride_uuid
                         ? "Uploading..."
-                        : "Retry Strava"}
+                        : t("trends.retry_strava")}
                     </button>
                   )}
                 </div>

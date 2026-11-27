@@ -7,20 +7,26 @@ import {
   type BridgeClientSnapshot,
 } from "./lib/bridge-client.js";
 import { VersionAutoReloader } from "./lib/auto-update.js";
+import { I18nProvider, useI18n } from "./lib/i18n.js";
+import { ThemeProvider, useTheme } from "./lib/theme.js";
 import { AuthScreen } from "./components/AuthScreen.js";
-import { RidePage } from "./pages/RidePage.js";
+import { PasskeyPromptBanner } from "./components/PasskeyPromptBanner.js";
+import { OverviewPage } from "./pages/OverviewPage.js";
 import { CalendarPage } from "./pages/CalendarPage.js";
 import { WorkoutsPage } from "./pages/WorkoutsPage.js";
-import { RoutesPage } from "./pages/RoutesPage.js";
 import { AnalyticsPage } from "./pages/AnalyticsPage.js";
 import { SettingsPage } from "./pages/SettingsPage.js";
+import { TrainerWorkspace, type TrainerSubTab } from "./pages/TrainerWorkspace.js";
 
 export const APP_NAME = "PainCave";
 
-type TabKey = "ride" | "calendar" | "workouts" | "routes" | "analytics" | "settings";
+type CoreTabKey = "overview" | "calendar" | "workouts" | "trends" | "settings" | "trainer";
 
-export function App() {
-  const [tab, setTab] = useState<TabKey>("ride");
+function AppShell() {
+  const { locale, setLocale, t } = useI18n();
+  const { theme, toggleTheme } = useTheme();
+  const [tab, setTab] = useState<CoreTabKey>("overview");
+  const [trainerSubTab, setTrainerSubTab] = useState<TrainerSubTab>("ride");
   const [authChecked, setAuthChecked] = useState(false);
   const [authState, setAuthState] = useState<AuthState>({
     authenticated: false,
@@ -67,7 +73,7 @@ export function App() {
     setThresholds(prof.latest_thresholds);
     const trainerEnabled = prof.profile?.features?.indoor_trainer ?? true;
     if (!trainerEnabled) {
-      setTab((prev) => (prev === "ride" || prev === "routes" ? "analytics" : prev));
+      setTab((prev) => (prev === "trainer" ? "overview" : prev));
     }
   }, []);
 
@@ -91,6 +97,7 @@ export function App() {
 
   const handleSignOut = async () => {
     await api.logout().catch(() => {});
+    setTab("overview");
     await refreshAuthState();
   };
 
@@ -113,7 +120,8 @@ export function App() {
       route: route ?? null,
     };
     bridgeClient.send(cmd);
-    setTab("ride");
+    setTrainerSubTab("ride");
+    setTab("trainer");
   };
 
   const handleLoadRouteOnTrainer = (route: RoutePayload) => {
@@ -127,7 +135,8 @@ export function App() {
       route,
     };
     bridgeClient.send(cmd);
-    setTab("ride");
+    setTrainerSubTab("ride");
+    setTab("trainer");
   };
 
   const handleChangeBridgeUrl = (next: string) => {
@@ -138,7 +147,7 @@ export function App() {
   if (!authChecked) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-400">
-        Loading {APP_NAME}...
+        {t("nav.loading")} {APP_NAME}...
       </div>
     );
   }
@@ -149,39 +158,35 @@ export function App() {
 
   const ftpWatts = thresholds?.ftp_watts ?? 250;
   const indoorTrainerEnabled = profile?.features?.indoor_trainer ?? true;
-  const navItems: readonly [TabKey, string][] = indoorTrainerEnabled
-    ? [
-        ["ride", "Ride"],
-        ["calendar", "Calendar"],
-        ["workouts", "Workouts"],
-        ["routes", "Routes"],
-        ["analytics", "Analytics"],
-        ["settings", "Settings"],
-      ]
-    : [
-        ["calendar", "Calendar"],
-        ["workouts", "Workouts"],
-        ["analytics", "Analytics"],
-        ["settings", "Settings"],
-      ];
+  const coreNavItems: readonly [Exclude<CoreTabKey, "trainer">, string][] = [
+    ["overview", t("nav.overview")],
+    ["calendar", t("nav.calendar")],
+    ["workouts", t("nav.workouts")],
+    ["trends", t("nav.trends")],
+    ["settings", t("nav.settings")],
+  ];
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <header className="border-b border-zinc-800 bg-zinc-900/60">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-3">
-          <div className="flex items-center gap-6">
-            <span className="text-xl font-black tracking-tight text-white">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-5">
+            <button
+              type="button"
+              onClick={() => setTab("overview")}
+              className="text-xl font-black tracking-tight text-white"
+            >
               Pain<span className="text-orange-500">Cave</span>
-            </span>
-            <nav className="flex gap-1">
-              {navItems.map(([key, label]) => (
+            </button>
+            <nav className="flex flex-wrap gap-1">
+              {coreNavItems.map(([key, label]) => (
                 <button
                   key={key}
                   type="button"
                   onClick={() => setTab(key)}
                   className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
                     tab === key
-                      ? "bg-orange-500 text-zinc-950 font-bold"
+                      ? "bg-orange-500 font-bold text-zinc-950"
                       : "text-zinc-400 hover:bg-zinc-800 hover:text-white"
                   }`}
                 >
@@ -191,26 +196,67 @@ export function App() {
             </nav>
           </div>
 
-          <div className="flex items-center gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             {indoorTrainerEnabled && (
-              <span
-                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium ${
-                  bridgeSnapshot.connected
-                    ? "bg-emerald-500/15 text-emerald-300"
-                    : "bg-zinc-800 text-zinc-400"
+              <button
+                type="button"
+                onClick={() => setTab("trainer")}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-semibold transition ${
+                  tab === "trainer"
+                    ? "border-orange-500 bg-orange-500 text-zinc-950"
+                    : "border-orange-500/40 bg-orange-500/10 text-orange-300 hover:bg-orange-500/20"
                 }`}
+                title={t("nav.trainer_app")}
               >
                 <span
                   className={`h-2 w-2 rounded-full ${
-                    bridgeSnapshot.connected ? "bg-emerald-400" : "bg-zinc-500"
+                    bridgeSnapshot.connected ? "bg-emerald-400" : "bg-zinc-400"
                   }`}
                 />
-                {bridgeSnapshot.connected ? "Bridge Connected" : "Bridge Offline"}
-              </span>
+                {t("nav.trainer_app")}
+              </button>
             )}
-            {thresholds?.ftp_watts && (
-              <span className="text-zinc-400">FTP {thresholds.ftp_watts}W</span>
-            )}
+
+            <div
+              role="group"
+              aria-label="Language"
+              className="inline-flex rounded-lg border border-zinc-700 bg-zinc-950 p-0.5 text-[11px] font-semibold"
+            >
+              <button
+                type="button"
+                onClick={() => setLocale("fr-CA")}
+                aria-pressed={locale === "fr-CA"}
+                className={`rounded-md px-2 py-0.5 ${
+                  locale === "fr-CA"
+                    ? "bg-orange-500 text-zinc-950"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                FR
+              </button>
+              <button
+                type="button"
+                onClick={() => setLocale("en")}
+                aria-pressed={locale === "en"}
+                className={`rounded-md px-2 py-0.5 ${
+                  locale === "en"
+                    ? "bg-orange-500 text-zinc-950"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                EN
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={toggleTheme}
+              title={t("theme.toggle_title")}
+              className="rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-[11px] font-semibold text-zinc-300 hover:bg-zinc-800"
+            >
+              {theme === "light" ? `☀ ${t("theme.light")}` : `☾ ${t("theme.dark")}`}
+            </button>
+
             {authState.user && (
               <span className="hidden rounded-full border border-zinc-800 bg-zinc-950 px-2.5 py-1 text-zinc-300 sm:inline">
                 {authState.user.name}
@@ -221,19 +267,23 @@ export function App() {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-6">
-        {tab === "ride" && indoorTrainerEnabled && (
-          <RidePage
-            snapshot={bridgeSnapshot}
-            ftpWatts={ftpWatts}
-            sendCommand={(cmd) => bridgeClient.send(cmd)}
+        <PasskeyPromptBanner authState={authState} />
+
+        {tab === "overview" && (
+          <OverviewPage
+            indoorTrainerEnabled={indoorTrainerEnabled}
+            onOpenTrainer={() => setTab("trainer")}
+            onNavigateTab={(next) => setTab(next)}
           />
         )}
+
         {tab === "calendar" && (
           <CalendarPage
             indoorTrainerEnabled={indoorTrainerEnabled}
             onLoadWorkout={handleLoadWorkoutOnTrainer}
           />
         )}
+
         {tab === "workouts" && (
           <WorkoutsPage
             ftpWatts={ftpWatts}
@@ -242,20 +292,11 @@ export function App() {
             onLoadWorkout={handleLoadWorkoutOnTrainer}
           />
         )}
-        {tab === "routes" && indoorTrainerEnabled && (
-          <RoutesPage
-            onLoadRoute={handleLoadRouteOnTrainer}
-            onLoadWorkoutWithRoute={(workoutId, route) =>
-              handleLoadWorkoutOnTrainer(workoutId, undefined, route)
-            }
-          />
-        )}
-        {tab === "analytics" && <AnalyticsPage thresholds={thresholds} />}
+
+        {tab === "trends" && <AnalyticsPage thresholds={thresholds} />}
+
         {tab === "settings" && (
           <SettingsPage
-            bridgeUrl={bridgeUrl}
-            onChangeBridgeUrl={handleChangeBridgeUrl}
-            bridgeSnapshot={bridgeSnapshot}
             profile={profile}
             latestThresholds={thresholds}
             onThresholdsUpdated={refreshProfile}
@@ -263,7 +304,34 @@ export function App() {
             onSignOut={handleSignOut}
           />
         )}
+
+        {tab === "trainer" && indoorTrainerEnabled && (
+          <TrainerWorkspace
+            subTab={trainerSubTab}
+            onChangeSubTab={setTrainerSubTab}
+            onExitTrainer={() => setTab("overview")}
+            snapshot={bridgeSnapshot}
+            ftpWatts={ftpWatts}
+            bridgeUrl={bridgeUrl}
+            onChangeBridgeUrl={handleChangeBridgeUrl}
+            sendCommand={(cmd) => bridgeClient.send(cmd)}
+            onLoadRoute={handleLoadRouteOnTrainer}
+            onLoadWorkoutWithRoute={(workoutId, route) =>
+              handleLoadWorkoutOnTrainer(workoutId, undefined, route)
+            }
+          />
+        )}
       </main>
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <ThemeProvider>
+      <I18nProvider defaultLocale="fr-CA">
+        <AppShell />
+      </I18nProvider>
+    </ThemeProvider>
   );
 }

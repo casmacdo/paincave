@@ -1,8 +1,171 @@
 @import "tailwindcss";
 @import "uplot/dist/uPlot.min.css";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+  --pc-chart-bg: #ffffff;
+  --pc-chart-grid: #e2e8f0;
+  --pc-chart-zero: #94a3b8;
+  --pc-chart-axis: #475569;
+  --pc-chart-cursor: #64748b;
+  --pc-chart-dot-stroke: #ffffff;
+}
+
+html.dark {
+  color-scheme: dark;
+  --pc-chart-bg: #09090b;
+  --pc-chart-grid: #27272a;
+  --pc-chart-zero: #3f3f46;
+  --pc-chart-axis: #71717a;
+  --pc-chart-cursor: #a1a1aa;
+  --pc-chart-dot-stroke: #09090b;
+}
 
 @layer base {
   body {
     font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: #f8fafc;
+    color: #0f172a;
   }
+
+  html.dark body {
+    background-color: #09090b;
+    color: #f4f4f5;
+  }
+}
+
+/* Crisp Light Mode surface & contrast system across all pages and trainer sub-app */
+html:not(.dark) .bg-zinc-950 {
+  background-color: #f8fafc !important;
+}
+html:not(.dark) .bg-zinc-950\/90,
+html:not(.dark) .bg-zinc-950\/70,
+html:not(.dark) .bg-zinc-950\/60,
+html:not(.dark) .bg-zinc-950\/50 {
+  background-color: #f1f5f9 !important;
+}
+html:not(.dark) .bg-zinc-900 {
+  background-color: #ffffff !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+html:not(.dark) .bg-zinc-900\/70,
+html:not(.dark) .bg-zinc-900\/60,
+html:not(.dark) .bg-zinc-900\/50 {
+  background-color: rgba(255, 255, 255, 0.92) !important;
+}
+html:not(.dark) .bg-zinc-800,
+html:not(.dark) .bg-zinc-800\/80 {
+  background-color: #f1f5f9 !important;
+}
+html:not(.dark) .hover\:bg-zinc-800:hover,
+html:not(.dark) .hover\:bg-zinc-700:hover {
+  background-color: #e2e8f0 !important;
+}
+html:not(.dark) .bg-zinc-700 {
+  background-color: #e2e8f0 !important;
+}
+html:not(.dark) .border-zinc-800,
+html:not(.dark) .border-zinc-800\/80,
+html:not(.dark) .border-zinc-800\/70,
+html:not(.dark) .border-zinc-800\/50 {
+  border-color: #e2e8f0 !important;
+}
+html:not(.dark) .border-zinc-700,
+html:not(.dark) .border-zinc-600 {
+  border-color: #cbd5e1 !important;
+}
+html:not(.dark) .hover\:border-zinc-700:hover,
+html:not(.dark) .hover\:border-zinc-500:hover {
+  border-color: #94a3b8 !important;
+}
+
+/* Crisp typography contrast in Light Mode */
+html:not(.dark) .text-white {
+  color: #0f172a !important;
+}
+html:not(.dark) .hover\:text-white:hover {
+  color: #0f172a !important;
+}
+html:not(.dark) .text-zinc-100,
+html:not(.dark) .text-zinc-200 {
+  color: #1e293b !important;
+}
+html:not(.dark) .text-zinc-300 {
+  color: #334155 !important;
+}
+html:not(.dark) .text-zinc-400 {
+  color: #475569 !important;
+}
+html:not(.dark) .text-zinc-500 {
+  color: #64748b !important;
+}
+
+/* Primary accent buttons stay vibrant with crisp white text in Light Mode */
+html:not(.dark) .bg-orange-500 {
+  background-color: #ea580c !important;
+  color: #ffffff !important;
+}
+html:not(.dark) .bg-orange-500:hover {
+  background-color: #c2410c !important;
+}
+html:not(.dark) .bg-orange-500 .text-zinc-950,
+html:not(.dark) .bg-orange-500.text-zinc-950 {
+  color: #ffffff !important;
+}
+
+/* Readable semantic text accents on white/light backgrounds */
+html:not(.dark) .text-orange-400,
+html:not(.dark) .text-orange-300,
+html:not(.dark) .text-orange-200,
+html:not(.dark) .text-orange-100 {
+  color: #c2410c !important;
+}
+html:not(.dark) .text-emerald-400,
+html:not(.dark) .text-emerald-300,
+html:not(.dark) .text-emerald-200,
+html:not(.dark) .text-emerald-100 {
+  color: #047857 !important;
+}
+html:not(.dark) .text-sky-400,
+html:not(.dark) .text-sky-300 {
+  color: #0369a1 !important;
+}
+html:not(.dark) .text-blue-300,
+html:not(.dark) .text-blue-100 {
+  color: #1d4ed8 !important;
+}
+html:not(.dark) .text-violet-300,
+html:not(.dark) .text-violet-400,
+html:not(.dark) .text-violet-100 {
+  color: #6d28d9 !important;
+}
+html:not(.dark) .text-indigo-300 {
+  color: #4338ca !important;
+}
+html:not(.dark) .text-rose-400,
+html:not(.dark) .text-rose-300,
+html:not(.dark) .text-rose-200,
+html:not(.dark) .text-rose-100 {
+  color: #be123c !important;
+}
+html:not(.dark) .text-amber-400,
+html:not(.dark) .text-amber-300 {
+  color: #b45309 !important;
+}
+html:not(.dark) .text-yellow-200,
+html:not(.dark) .text-yellow-100 {
+  color: #a16207 !important;
+}
+html:not(.dark) .text-lime-300,
+html:not(.dark) .text-lime-100 {
+  color: #4d7c0f !important;
+}
+html:not(.dark) .text-red-300,
+html:not(.dark) .text-red-100 {
+  color: #b91c1c !important;
+}
+html:not(.dark) .bg-zinc-200.text-zinc-950 {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
 }

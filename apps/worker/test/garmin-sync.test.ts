@@ -266,7 +266,29 @@ describe("Garmin Connect Personal API Sync & Encrypted Credentials", () => {
     expect(bioBody.biometrics[0]?.sleep_score).toBe(88);
     expect(bioBody.biometrics[0]?.resting_hr_bpm).toBe(48);
 
-    // 5. Graceful 429 rate-limit handling
+    // 5. Explicit historical date-range sync works for chunked backfill
+    const rangeRes = await exports.default.fetch("https://paincave.test/api/garmin/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        start_date: today,
+        end_date: today,
+        skip_pmc_recompute: true,
+      }),
+    });
+    expect(rangeRes.status).toBe(200);
+    const rangeBody = await rangeRes.json<{
+      ok: boolean;
+      start_date: string;
+      end_date: string;
+      activities_skipped: number;
+    }>();
+    expect(rangeBody.ok).toBe(true);
+    expect(rangeBody.start_date).toBe(today);
+    expect(rangeBody.end_date).toBe(today);
+    expect(rangeBody.activities_skipped).toBe(1);
+
+    // 6. Graceful 429 rate-limit handling
     simulateRateLimit = true;
     const sync429 = await exports.default.fetch("https://paincave.test/api/garmin/sync", {
       method: "POST",

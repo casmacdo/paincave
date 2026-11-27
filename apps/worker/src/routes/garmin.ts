@@ -13,8 +13,13 @@ const ConnectGarminSchema = z.object({
   api_key: z.string().trim().min(12).max(512),
 });
 
+const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 const SyncGarminSchema = z.object({
-  days: z.number().int().min(1).max(30).optional(),
+  days: z.number().int().min(1).max(31).optional(),
+  start_date: z.string().regex(ISO_DAY_RE).optional(),
+  end_date: z.string().regex(ISO_DAY_RE).optional(),
+  skip_pmc_recompute: z.boolean().optional(),
 });
 
 export function createGarminRoutes(): Hono<HonoAppContext> {
@@ -50,8 +55,15 @@ export function createGarminRoutes(): Hono<HonoAppContext> {
     const userId = c.get("userId");
     const body: unknown = await c.req.json().catch(() => ({}));
     const parsed = SyncGarminSchema.safeParse(body ?? {});
-    const days = parsed.success ? parsed.data.days : undefined;
-    const result = await syncGarminUser(c.env, userId, { days });
+    if (!parsed.success) {
+      return c.json({ error: "Invalid Garmin sync range", issues: parsed.error.issues }, 400);
+    }
+    const result = await syncGarminUser(c.env, userId, {
+      days: parsed.data.days,
+      startDate: parsed.data.start_date,
+      endDate: parsed.data.end_date,
+      skipPmcRecompute: parsed.data.skip_pmc_recompute,
+    });
     return c.json(result, result.ok ? 200 : result.rate_limited ? 429 : 400);
   });
 

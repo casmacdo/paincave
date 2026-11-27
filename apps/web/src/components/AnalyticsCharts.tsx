@@ -95,10 +95,10 @@ export function PmcChart({ data }: { data: FitnessOverviewResponse["daily_pmc"] 
               y1={yOf(tick)}
               x2={width - pad.right}
               y2={yOf(tick)}
-              stroke={tick === 0 ? "#3f3f46" : "#27272a"}
+              stroke={tick === 0 ? "var(--pc-chart-zero)" : "var(--pc-chart-grid)"}
               strokeDasharray={tick === 0 ? "4 4" : undefined}
             />
-            <text x={pad.left - 6} y={yOf(tick) + 4} textAnchor="end" fontSize="10" fill="#71717a">
+            <text x={pad.left - 6} y={yOf(tick) + 4} textAnchor="end" fontSize="10" fill="var(--pc-chart-axis)">
               {tick}
             </text>
           </g>
@@ -115,7 +115,7 @@ export function PmcChart({ data }: { data: FitnessOverviewResponse["daily_pmc"] 
             y1={pad.top}
             x2={xOf(hoverIdx)}
             y2={height - pad.bottom}
-            stroke="#a1a1aa"
+            stroke="var(--pc-chart-cursor)"
             strokeDasharray="3 3"
           />
         )}
@@ -130,7 +130,7 @@ export function PmcChart({ data }: { data: FitnessOverviewResponse["daily_pmc"] 
               y={height - 8}
               textAnchor={idx === 0 ? "start" : idx === data.length - 1 ? "end" : "middle"}
               fontSize="10"
-              fill="#71717a"
+              fill="var(--pc-chart-axis)"
             >
               {data[idx]?.day.slice(5)}
             </text>
@@ -228,15 +228,15 @@ export function MmpCurveChart({
       >
         {[0, Math.round(yCeiling / 2), yCeiling].map((tick) => (
           <g key={tick}>
-            <line x1={pad.left} y1={yOf(tick)} x2={width - pad.right} y2={yOf(tick)} stroke="#27272a" />
-            <text x={pad.left - 6} y={yOf(tick) + 4} textAnchor="end" fontSize="10" fill="#71717a">
+            <line x1={pad.left} y1={yOf(tick)} x2={width - pad.right} y2={yOf(tick)} stroke="var(--pc-chart-grid)" />
+            <text x={pad.left - 6} y={yOf(tick) + 4} textAnchor="end" fontSize="10" fill="var(--pc-chart-axis)">
               {tick}W
             </text>
           </g>
         ))}
 
         {mmp90.length > 0 && (
-          <path d={buildPath(mmp90)} fill="none" stroke="#a1a1aa" strokeWidth={1.6} strokeDasharray="4 4" />
+          <path d={buildPath(mmp90)} fill="none" stroke="var(--pc-chart-cursor)" strokeWidth={1.6} strokeDasharray="4 4" />
         )}
         {mmp42.length > 0 && (
           <path d={buildPath(mmp42)} fill="none" stroke="#f97316" strokeWidth={2.5} />
@@ -255,11 +255,11 @@ export function MmpCurveChart({
                   cy={yOf(pt42.watts)}
                   r={active ? 5 : 3}
                   fill="#f97316"
-                  stroke="#09090b"
+                  stroke="var(--pc-chart-dot-stroke)"
                   strokeWidth={1.5}
                 />
               )}
-              <text x={x} y={height - 8} textAnchor="middle" fontSize="9.5" fill="#71717a">
+              <text x={x} y={height - 8} textAnchor="middle" fontSize="9.5" fill="var(--pc-chart-axis)">
                 {formatDurationTick(dur)}
               </text>
             </g>
@@ -381,8 +381,8 @@ export function RideTimeseriesChart({ points }: { points: readonly RideTimeserie
       >
         {[0, Math.round(wCeil / 2), wCeil].map((tick) => (
           <g key={tick}>
-            <line x1={pad.left} y1={yW(tick)} x2={width - pad.right} y2={yW(tick)} stroke="#27272a" />
-            <text x={pad.left - 5} y={yW(tick) + 3.5} textAnchor="end" fontSize="9.5" fill="#71717a">
+            <line x1={pad.left} y1={yW(tick)} x2={width - pad.right} y2={yW(tick)} stroke="var(--pc-chart-grid)" />
+            <text x={pad.left - 5} y={yW(tick) + 3.5} textAnchor="end" fontSize="9.5" fill="var(--pc-chart-axis)">
               {tick}
             </text>
           </g>
@@ -398,15 +398,15 @@ export function RideTimeseriesChart({ points }: { points: readonly RideTimeserie
             y1={pad.top}
             x2={xOf(active.t_s)}
             y2={pad.top + plotH}
-            stroke="#a1a1aa"
+            stroke="var(--pc-chart-cursor)"
             strokeDasharray="3 3"
           />
         )}
 
-        <text x={pad.left} y={height - 6} fontSize="9.5" fill="#71717a">
+        <text x={pad.left} y={height - 6} fontSize="9.5" fill="var(--pc-chart-axis)">
           0:00
         </text>
-        <text x={width - pad.right} y={height - 6} textAnchor="end" fontSize="9.5" fill="#71717a">
+        <text x={width - pad.right} y={height - 6} textAnchor="end" fontSize="9.5" fill="var(--pc-chart-axis)">
           {formatClockShort(maxT)}
         </text>
 

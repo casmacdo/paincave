@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { api, type AuthState } from "../lib/api.js";
 import { authClient } from "../lib/auth-client.js";
+import { useI18n } from "../lib/i18n.js";
+import { useTheme } from "../lib/theme.js";
 
 interface AuthScreenProps {
   authState: AuthState;
@@ -30,6 +32,8 @@ function getInitialAuthError(): string | null {
 }
 
 export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
+  const { locale, setLocale, t } = useI18n();
+  const { theme, toggleTheme } = useTheme();
   const providers = authState.providers ?? {
     email_password: true,
     passkey: true,
@@ -146,27 +150,57 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-4">
       <div className="w-full max-w-md space-y-5 rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
-        <div className="space-y-1">
-          <div className="flex items-center justify-between">
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
             <h1 className="text-2xl font-black tracking-tight text-white">
               Pain<span className="text-orange-500">Cave</span>
             </h1>
-            <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2.5 py-0.5 text-[11px] font-semibold text-zinc-300">
-              {hasOwner ? "Single-Owner Locked" : "Owner Setup"}
+            <div className="flex items-center gap-1.5">
+              <div className="inline-flex rounded-lg border border-zinc-700 bg-zinc-950 p-0.5 text-[10px] font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setLocale("fr-CA")}
+                  className={`rounded px-1.5 py-0.5 ${
+                    locale === "fr-CA" ? "bg-orange-500 text-zinc-950" : "text-zinc-400"
+                  }`}
+                >
+                  FR
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocale("en")}
+                  className={`rounded px-1.5 py-0.5 ${
+                    locale === "en" ? "bg-orange-500 text-zinc-950" : "text-zinc-400"
+                  }`}
+                >
+                  EN
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={toggleTheme}
+                title={t("theme.toggle_title")}
+                className="rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] font-semibold text-zinc-300"
+              >
+                {theme === "light" ? "☀" : "☾"}
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm text-zinc-400">
+              {hasOwner ? t("auth.subtitle_signin") : t("auth.subtitle_setup")}
+            </p>
+            <span className="shrink-0 rounded-full border border-zinc-700 bg-zinc-950 px-2.5 py-0.5 text-[11px] font-semibold text-zinc-300">
+              {hasOwner ? t("auth.single_owner_locked") : t("auth.owner_setup")}
             </span>
           </div>
-          <p className="text-sm text-zinc-400">
-            {hasOwner
-              ? "Sign in to your private cycling training instance."
-              : "Claim this self-hosted instance by creating the single owner account."}
-          </p>
         </div>
 
         {!hasOwner && (
           <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
-            Single-user mode: once the owner account is created, registration automatically locks so
-            no other accounts can sign up.
-            {authState.owner_email_restricted && " Restricted by ALLOWED_OWNER_EMAIL."}
+            {locale === "fr-CA"
+              ? "Accès privé sur invitation : seuls les comptes autorisés peuvent s'inscrire."
+              : "Private invite-only instance: only authorized accounts can register."}
           </div>
         )}
 
@@ -189,7 +223,7 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
                 onClick={() => void handleGoogleSignIn()}
                 className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950 py-2.5 text-sm font-semibold text-white transition hover:border-zinc-500 hover:bg-zinc-800 disabled:opacity-60"
               >
-                Continue with Google
+                {t("auth.continue_google")}
               </button>
             )}
             {providers.passkey && hasOwner && (
@@ -199,12 +233,12 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
                 onClick={() => void handlePasskeySignIn()}
                 className="flex w-full items-center justify-center gap-2 rounded-xl border border-orange-500/40 bg-orange-500/10 py-2.5 text-sm font-semibold text-orange-200 transition hover:bg-orange-500/20 disabled:opacity-60"
               >
-                Sign in with Passkey
+                {t("auth.sign_in_passkey")}
               </button>
             )}
             <div className="flex items-center gap-3 py-1 text-[11px] uppercase tracking-wider text-zinc-500">
               <div className="h-px flex-1 bg-zinc-800" />
-              <span>or with email</span>
+              <span>{t("auth.or_email")}</span>
               <div className="h-px flex-1 bg-zinc-800" />
             </div>
           </div>
@@ -216,14 +250,14 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
             {!hasOwner && mode === "claim_owner" && (
               <div>
                 <label htmlFor="auth-name" className="block text-xs font-medium text-zinc-400">
-                  Name
+                  {t("auth.name")}
                 </label>
                 <input
                   id="auth-name"
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Your name"
+                  placeholder={locale === "fr-CA" ? "Votre nom" : "Your name"}
                   required
                   className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-sm text-white focus:border-orange-500 focus:outline-none"
                 />
@@ -231,7 +265,7 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
             )}
             <div>
               <label htmlFor="auth-email" className="block text-xs font-medium text-zinc-400">
-                Email
+                {t("auth.email")}
               </label>
               <input
                 id="auth-email"
@@ -239,14 +273,14 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
                 autoComplete="username webauthn"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
+                placeholder="vous@exemple.com"
                 required
                 className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-sm text-white focus:border-orange-500 focus:outline-none"
               />
             </div>
             <div>
               <label htmlFor="auth-password" className="block text-xs font-medium text-zinc-400">
-                Password
+                {t("auth.password")}
               </label>
               <input
                 id="auth-password"
@@ -255,7 +289,13 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
                 minLength={8}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder={mode === "claim_owner" ? "At least 8 characters" : "Password"}
+                placeholder={
+                  mode === "claim_owner"
+                    ? locale === "fr-CA"
+                      ? "Au moins 8 caractères"
+                      : "At least 8 characters"
+                    : t("auth.password")
+                }
                 required
                 className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-sm text-white focus:border-orange-500 focus:outline-none"
               />
@@ -266,10 +306,10 @@ export function AuthScreen({ authState, onAuthenticated }: AuthScreenProps) {
               className="w-full rounded-xl bg-orange-500 py-3 text-sm font-bold text-zinc-950 hover:bg-orange-400 disabled:opacity-60"
             >
               {submitting
-                ? "Please wait..."
+                ? t("auth.please_wait")
                 : mode === "claim_owner" && !hasOwner
-                  ? "Create Owner Account"
-                  : "Sign In"}
+                  ? t("auth.create_owner")
+                  : t("auth.sign_in")}
             </button>
 
             {!hasOwner && (

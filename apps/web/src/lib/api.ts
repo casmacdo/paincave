@@ -235,7 +235,20 @@ export const api = {
       method: "DELETE",
     }),
   getBlocks: () => requestJson<{ blocks: Record<string, unknown>[] }>("/api/athlete/blocks"),
-  getNotes: () => requestJson<{ notes: { id: string; category: string; content: string }[] }>("/api/athlete/notes"),
+  getNotes: () =>
+    requestJson<{
+      notes: {
+        id: string;
+        category: string;
+        sport?: string | null;
+        content: string;
+        updated_at?: string;
+      }[];
+    }>("/api/athlete/notes"),
+  archiveNote: (id: string) =>
+    requestJson<{ ok: boolean }>(`/api/athlete/notes/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 
   getWorkouts: () => requestJson<{ workouts: WorkoutRecord[] }>("/api/workouts"),
   createWorkout: (spec: AnyWorkoutSpec, source?: "user" | "import") =>
@@ -421,6 +434,9 @@ export const api = {
     requestJson<{
       ok: boolean;
       rate_limited: boolean;
+      retry_after_s?: number | null;
+      start_date?: string;
+      end_date?: string;
       activities_imported: number;
       activities_skipped: number;
       biometrics_upserted: number;
@@ -429,6 +445,30 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ days }),
+    }),
+  syncGarminRange: (startDate: string, endDate: string, skipPmcRecompute = true) =>
+    requestJson<{
+      ok: boolean;
+      rate_limited: boolean;
+      retry_after_s?: number | null;
+      start_date: string;
+      end_date: string;
+      activities_imported: number;
+      activities_skipped: number;
+      biometrics_upserted: number;
+      error: string | null;
+    }>("/api/garmin/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start_date: startDate,
+        end_date: endDate,
+        skip_pmc_recompute: skipPmcRecompute,
+      }),
+    }),
+  rebuildPmc: () =>
+    requestJson<{ ok: boolean; days_computed?: number }>("/api/import/rebuild-pmc", {
+      method: "POST",
     }),
   disconnectGarmin: () =>
     requestJson<{ ok: boolean }>("/api/garmin/disconnect", { method: "DELETE" }),

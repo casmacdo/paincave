@@ -5,6 +5,7 @@ import {
   type RideRecord,
   type WorkoutRecord,
 } from "../lib/api.js";
+import { useI18n } from "../lib/i18n.js";
 
 interface CalendarPageProps {
   indoorTrainerEnabled?: boolean;
@@ -49,6 +50,7 @@ export function CalendarPage({
   indoorTrainerEnabled = true,
   onLoadWorkout,
 }: CalendarPageProps) {
+  const { t } = useI18n();
   const [sessions, setSessions] = useState<PlannedSessionRecord[]>([]);
   const [rides, setRides] = useState<RideRecord[]>([]);
   const [workouts, setWorkouts] = useState<WorkoutRecord[]>([]);
@@ -205,9 +207,9 @@ export function CalendarPage({
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Training Calendar</h1>
+          <h1 className="text-2xl font-bold text-white">{t("calendar.title")}</h1>
           <p className="text-sm text-zinc-400">
-            Showing {start} through {end}
+            {t("calendar.showing")} {start} {t("calendar.through")} {end}
           </p>
         </div>
 
@@ -217,7 +219,7 @@ export function CalendarPage({
           disabled={workouts.length === 0}
           className="rounded-lg bg-orange-500 px-3.5 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {showScheduleForm ? "Close Scheduler" : "+ Schedule Workout"}
+          {showScheduleForm ? t("calendar.close_scheduler") : t("calendar.schedule_btn")}
         </button>
       </div>
 
@@ -339,11 +341,11 @@ export function CalendarPage({
         <div className="grid gap-6 lg:grid-cols-2">
           <section className="space-y-3">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
-              Planned Workouts
+              {t("calendar.planned")}
             </h2>
             {sessions.length === 0 ? (
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 text-sm text-zinc-500">
-                No planned sessions in this window. Use Remote MCP to plan and schedule workouts for your week.
+                {t("calendar.no_planned")}
               </div>
             ) : (
               sessions.map((s) => (
@@ -428,11 +430,11 @@ export function CalendarPage({
 
           <section className="space-y-3">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
-              Completed Activities
+              {t("calendar.completed")}
             </h2>
             {rides.length === 0 ? (
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 text-sm text-zinc-500">
-                No completed activities recorded in this window yet.
+                {t("calendar.no_completed")}
               </div>
             ) : (
               rides.map((r) => (
