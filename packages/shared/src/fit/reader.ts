@@ -17,6 +17,8 @@ interface FitLocalDef {
 
 export interface ParsedFitRide {
   startTimeIso: string | null;
+  subSport: number | null;
+  hasGps: boolean;
   samples: TelemetrySample[];
 }
 
@@ -32,6 +34,16 @@ function readUInt(
   if (size === 2) return view.getUint16(0, littleEndian);
   if (size === 4) return view.getUint32(0, littleEndian);
   return null;
+}
+
+function readSInt32(
+  bytes: Uint8Array,
+  offset: number,
+  littleEndian: boolean
+): number | null {
+  if (offset + 4 > bytes.length) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset + offset, 4);
+  return view.getInt32(0, littleEndian);
 }
 
 function fitTimestampToIso(fitTs: number): string {
@@ -71,11 +83,16 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
     hr: number | null;
     cadence: number | null;
     speedKph: number | null;
+    latDeg: number | null;
+    lonDeg: number | null;
+    elevationM: number | null;
   }[] = [];
 
   let cursor = headerSize;
   let lastTimestamp = 0;
   let startTimeFit: number | null = null;
+  let subSport: number | null = null;
+  let hasGps = false;
 
   while (cursor < dataEnd) {
     const header = fitBytes[cursor++];
@@ -144,13 +161,17 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
     let hr: number | null = null;
     let cadence: number | null = null;
     let speedKph: number | null = null;
+    let latDeg: number | null = null;
+    let lonDeg: number | null = null;
+    let elevationM: number | null = null;
 
     for (const f of def.fields) {
       if (cursor + f.size > dataEnd) {
         cursor = dataEnd;
         break;
       }
-      const val = readUInt(fitBytes, cursor, f.size, def.littleEndian);
+      const fieldOffset = cursor;
+      const val = readUInt(fitBytes, fieldOffset, f.size, def.littleEndian);
       cursor += f.size;
       if (val === null) continue;
 
@@ -159,6 +180,22 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
         if (f.fieldNum === 253 && f.size === 4 && val !== 0xffffffff) {
           ts = val;
           lastTimestamp = val;
+        } else if (f.fieldNum === 0 && f.size === 4) {
+          const semicircles = readSInt32(fitBytes, fieldOffset, def.littleEndian);
+          if (semicircles !== null && semicircles !== 0x7fffffff) {
+            latDeg = (semicircles * 180) / 2_147_483_648;
+            hasGps = true;
+          }
+        } else if (f.fieldNum === 1 && f.size === 4) {
+          const semicircles = readSInt32(fitBytes, fieldOffset, def.littleEndian);
+          if (semicircles !== null && semicircles !== 0x7fffffff) {
+            lonDeg = (semicircles * 180) / 2_147_483_648;
+            hasGps = true;
+          }
+        } else if (f.fieldNum === 2 && f.size === 2 && val !== 0xffff) {
+          elevationM = Number((val / 5 - 500).toFixed(1));
+        } else if (f.fieldNum === 78 && f.size === 4 && val !== 0xffffffff) {
+          elevationM = Number((val / 5 - 500).toFixed(1));
         } else if (f.fieldNum === 3 && f.size === 1 && val !== 0xff) {
           hr = val;
         } else if (f.fieldNum === 4 && f.size === 1 && val !== 0xff) {
@@ -171,9 +208,11 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
           speedKph = Number(((val / 1000) * 3.6).toFixed(1));
         }
       } else if (def.globalMsgNum === 18) {
-        // Session message: start_time = field 2
+        // Session message: start_time = field 2, sub_sport = field 6
         if (f.fieldNum === 2 && f.size === 4 && val !== 0xffffffff && startTimeFit === null) {
           startTimeFit = val;
+        } else if (f.fieldNum === 6 && f.size === 1 && val !== 0xff && subSport === null) {
+          subSport = val;
         }
       } else if (def.globalMsgNum === 0) {
         // FileId message: time_created = field 4
@@ -186,7 +225,7 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
     cursor += def.devBytes;
 
     if (def.globalMsgNum === 20) {
-      rawRecords.push({ ts, watts, hr, cadence, speedKph });
+      rawRecords.push({ ts, watts, hr, cadence, speedKph, latDeg, lonDeg, elevationM });
     }
   }
 
@@ -197,11 +236,16 @@ export function parseFitRecords(fitBytes: Uint8Array): ParsedFitRide {
     hr_bpm: r.hr,
     cadence_rpm: r.cadence,
     speed_kph: r.speedKph,
+    ...(r.latDeg !== null ? { lat_deg: r.latDeg } : {}),
+    ...(r.lonDeg !== null ? { lon_deg: r.lonDeg } : {}),
+    ...(r.elevationM !== null ? { elevation_m: r.elevationM } : {}),
   }));
 
   const resolvedStart = startTimeFit ?? firstTs;
   return {
     startTimeIso: resolvedStart !== null ? fitTimestampToIso(resolvedStart) : null,
+    subSport,
+    hasGps,
     samples,
   };
 }

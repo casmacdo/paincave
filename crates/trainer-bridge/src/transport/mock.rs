@@ -42,6 +42,12 @@ impl MockTransport {
     pub fn new() -> Self {
         Self::default()
     }
+
+    #[cfg(test)]
+    pub async fn last_slope_grade_pct(&self) -> (WorkoutStepMode, f64) {
+        let guard = self.state.lock().await;
+        (guard.mode, guard.target_grade_pct)
+    }
 }
 
 #[async_trait]

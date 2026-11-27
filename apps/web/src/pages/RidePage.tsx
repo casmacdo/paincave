@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { BridgeCommand, FlattenedStep } from "@paincave/shared";
 import { LiveWorkoutChart, type LiveDataPoint } from "../components/LiveWorkoutChart.js";
 import { PostRideModal } from "../components/PostRideModal.js";
+import { RouteElevationMap } from "../components/RouteElevationMap.js";
 import { playIntervalCueTone } from "../lib/audio-cues.js";
 import type { BridgeClientSnapshot } from "../lib/bridge-client.js";
 
@@ -343,6 +344,22 @@ export function RidePage({ snapshot, ftpWatts, sendCommand }: RidePageProps) {
         liveHistory={history}
         elapsedS={tel?.elapsed_s ?? 0}
       />
+
+      {/* Active Virtual / SIM Route Elevation & Map */}
+      {snapshot.loadedRoute && (
+        <RouteElevationMap
+          name={snapshot.loadedRoute.name}
+          points={snapshot.loadedRoute.points}
+          loopRoute={snapshot.loadedRoute.loop_route}
+          simMode={snapshot.loadedRoute.sim_mode}
+          trainerDifficultyPct={snapshot.loadedRoute.trainer_difficulty_pct}
+          currentDistanceM={tel?.distance_m ?? 0}
+          currentGradePct={tel?.grade_pct ?? null}
+          currentElevationM={tel?.elevation_m ?? null}
+          speedKph={tel?.speed_kph ?? null}
+          compact
+        />
+      )}
 
       {/* Trainer Controls */}
       <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">

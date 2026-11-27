@@ -1,4 +1,4 @@
-import type { FlattenedStep, RideUploadSummary, WorkoutSpec } from "@paincave/shared";
+import type { FlattenedStep, RideUploadSummary, RoutePoint, WorkoutSpec } from "@paincave/shared";
 
 export interface AuthState {
   authenticated: boolean;
@@ -78,6 +78,20 @@ export interface RideRecord {
   feel: number | null;
   notes: string;
   strava_upload_status: string;
+}
+
+export interface RouteRecord {
+  id: string;
+  name: string;
+  source: "gpx" | "fit_extract" | "preset";
+  description: string;
+  distance_m: number;
+  total_ascent_m: number;
+  max_grade_pct: number;
+  point_count: number;
+  loop_route: boolean;
+  is_preset: boolean;
+  created_at: string | null;
 }
 
 export interface FitnessOverviewResponse {
@@ -287,6 +301,25 @@ export const api = {
 
   getFitnessOverview: (days = 42) =>
     requestJson<FitnessOverviewResponse>(`/api/fitness/overview?days=${days}`),
+
+  getRoutes: () => requestJson<{ routes: RouteRecord[] }>("/api/routes"),
+  getRoute: (id: string) =>
+    requestJson<{ route: RouteRecord; points: RoutePoint[] }>(
+      `/api/routes/${encodeURIComponent(id)}`
+    ),
+  uploadGpxRoute: (gpxXml: string, name?: string) =>
+    requestJson<{ route: RouteRecord; points: RoutePoint[] }>("/api/routes/gpx", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gpx_xml: gpxXml, name }),
+    }),
+  extractRouteFromRide: (rideUuid: string) =>
+    requestJson<{ route: RouteRecord; points: RoutePoint[] }>(
+      `/api/routes/from-ride/${encodeURIComponent(rideUuid)}`,
+      { method: "POST" }
+    ),
+  deleteRoute: (id: string) =>
+    requestJson<{ ok: boolean }>(`/api/routes/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   getStravaStatus: () =>
     requestJson<{

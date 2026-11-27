@@ -1,3 +1,4 @@
+import { parseFitRecords } from "@paincave/shared";
 import type { AppEnv } from "../types.js";
 import { logJson } from "./logger.js";
 
@@ -215,6 +216,7 @@ async function markStravaStatus(
 export interface StravaRideSummaryMeta {
   ride_uuid: string;
   name: string;
+  source?: string;
   notes: string;
   r2_fit_key: string;
   duration_s: number;
@@ -297,7 +299,7 @@ export async function uploadFitToStrava(
   try {
     const [ride, intervalsRes] = await Promise.all([
       env.DB.prepare(
-        `SELECT ride_uuid, name, notes, r2_fit_key, duration_s, work_kj, avg_power, np_watts,
+        `SELECT ride_uuid, name, source, notes, r2_fit_key, duration_s, work_kj, avg_power, np_watts,
                 intensity_factor, tss, avg_hr, compliance_pct, rpe, feel
          FROM rides WHERE ride_uuid = ?`
       )
@@ -332,12 +334,25 @@ export async function uploadFitToStrava(
 
     const fitBuffer = await fitObj.arrayBuffer();
     const description = formatStravaRideDescription(ride, intervalsRes.results);
+    let isVirtualRouteRide = false;
+    try {
+      const parsedFit = parseFitRecords(new Uint8Array(fitBuffer));
+      // FIT SubSport 58 = virtual_activity, or indoor_bridge ride carrying synthetic/GPX GPS track
+      isVirtualRouteRide =
+        parsedFit.subSport === 58 || (ride.source === "indoor_bridge" && parsedFit.hasGps);
+    } catch {
+      isVirtualRouteRide = false;
+    }
     const form = new FormData();
     form.set("file", new Blob([fitBuffer], { type: "application/octet-stream" }), `${rideUuid}.fit`);
     form.set("data_type", "fit");
     form.set("name", ride.name);
     if (description) {
       form.set("description", description);
+    }
+    if (isVirtualRouteRide) {
+      form.set("sport_type", "VirtualRide");
+      form.set("trainer", "1");
     }
     form.set("external_id", rideUuid);
 

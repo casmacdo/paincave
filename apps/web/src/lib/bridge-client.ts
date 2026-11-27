@@ -1,4 +1,4 @@
-import type { BridgeCommand, BridgeEvent, FlattenedStep } from "@paincave/shared";
+import type { BridgeCommand, BridgeEvent, FlattenedStep, RoutePayload } from "@paincave/shared";
 
 export type TelemetryEvent = Extract<BridgeEvent, { type: "telemetry" }>;
 export type RideSavedEvent = Extract<BridgeEvent, { type: "ride_saved" }>;
@@ -9,6 +9,7 @@ export interface BridgeClientSnapshot {
   lastSaved: RideSavedEvent | null;
   lastError: string | null;
   loadedSteps: FlattenedStep[];
+  loadedRoute?: RoutePayload | null;
 }
 
 export type BridgeListener = (snapshot: BridgeClientSnapshot) => void;
@@ -29,6 +30,7 @@ export class BridgeClient {
     lastSaved: null,
     lastError: null,
     loadedSteps: [],
+    loadedRoute: null,
   };
 
   constructor(url = DEFAULT_BRIDGE_WS_URL) {
@@ -85,7 +87,7 @@ export class BridgeClient {
         if (event.type === "telemetry") {
           this.snapshot = { ...this.snapshot, telemetry: event };
         } else if (event.type === "ride_saved") {
-          this.snapshot = { ...this.snapshot, lastSaved: event, loadedSteps: [] };
+          this.snapshot = { ...this.snapshot, lastSaved: event, loadedSteps: [], loadedRoute: null };
         } else if (event.type === "error") {
           this.snapshot = { ...this.snapshot, lastError: `${event.code}: ${event.message}` };
         }
@@ -126,10 +128,23 @@ export class BridgeClient {
 
   send(cmd: BridgeCommand): boolean {
     if (cmd.type === "load_workout") {
-      this.snapshot = { ...this.snapshot, loadedSteps: cmd.steps, lastSaved: null };
+      this.snapshot = {
+        ...this.snapshot,
+        loadedSteps: cmd.steps,
+        loadedRoute: cmd.route ?? null,
+        lastSaved: null,
+      };
+      this.emit();
+    } else if (cmd.type === "load_route") {
+      this.snapshot = {
+        ...this.snapshot,
+        loadedSteps: [],
+        loadedRoute: cmd.route,
+        lastSaved: null,
+      };
       this.emit();
     } else if (cmd.type === "discard") {
-      this.snapshot = { ...this.snapshot, loadedSteps: [] };
+      this.snapshot = { ...this.snapshot, loadedSteps: [], loadedRoute: null };
       this.emit();
     }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
