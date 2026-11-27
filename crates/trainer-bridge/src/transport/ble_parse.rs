@@ -124,14 +124,15 @@ pub fn parse_cycling_power_measurement(bytes: &[u8]) -> Option<CyclingPowerSampl
 
 pub fn cadence_from_crank_events(previous: (u16, u16), current: (u16, u16)) -> Option<u8> {
     if current == previous {
-        return Some(0);
+        return None;
     }
     let revolutions = current.0.wrapping_sub(previous.0);
     let event_ticks = current.1.wrapping_sub(previous.1);
     if event_ticks == 0 {
         return None;
     }
-    let rpm = u32::from(revolutions) * 60 * 1024 / u32::from(event_ticks);
+    let rpm =
+        (u32::from(revolutions) * 60 * 1024 + u32::from(event_ticks) / 2) / u32::from(event_ticks);
     Some(rpm.min(u32::from(u8::MAX)) as u8)
 }
 
@@ -290,6 +291,7 @@ mod tests {
             cadence_from_crank_events((u16::MAX, 0), (0, 1024)),
             Some(60)
         );
+        assert_eq!(cadence_from_crank_events((10, 1024), (10, 1024)), None);
         Ok(())
     }
 

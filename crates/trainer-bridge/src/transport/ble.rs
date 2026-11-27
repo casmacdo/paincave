@@ -12,10 +12,11 @@ use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 use crate::protocol::{SensorConnectionState, SensorStatus};
 use crate::transport::ble_parse::{
-    FTMS_CONTROL_POINT_UUID, FTMS_INDOOR_BIKE_DATA_UUID, FTMS_SERVICE_UUID, HR_MEASUREMENT_UUID,
-    HR_SERVICE_UUID, encode_request_control, encode_set_indoor_bike_simulation,
+    CYCLING_POWER_MEASUREMENT_UUID, CYCLING_POWER_SERVICE_UUID, FTMS_CONTROL_POINT_UUID,
+    FTMS_INDOOR_BIKE_DATA_UUID, FTMS_SERVICE_UUID, HR_MEASUREMENT_UUID, HR_SERVICE_UUID,
+    cadence_from_crank_events, encode_request_control, encode_set_indoor_bike_simulation,
     encode_set_resistance_pct, encode_set_target_power, encode_start_or_resume,
-    parse_heart_rate_measurement, parse_indoor_bike_data,
+    parse_cycling_power_measurement, parse_heart_rate_measurement, parse_indoor_bike_data,
 };
 use crate::transport::{RawSensorSample, TrainerTransport};
 
@@ -24,6 +25,7 @@ const ADAPTER_IFACE: &str = "org.bluez.Adapter1";
 const DEVICE_IFACE: &str = "org.bluez.Device1";
 const GATT_CHAR_IFACE: &str = "org.bluez.GattCharacteristic1";
 const SAMPLE_STALE_AFTER: Duration = Duration::from_secs(6);
+const CRANK_STALE_AFTER: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredBleDevice {
@@ -32,6 +34,7 @@ pub struct DiscoveredBleDevice {
     pub name: String,
     pub connected: bool,
     pub is_ftms: bool,
+    pub is_cps: bool,
     pub is_hr: bool,
 }
 
@@ -40,6 +43,8 @@ struct BleSharedState {
     sample: RawSensorSample,
     trainer_last_seen: Option<Instant>,
     hr_last_seen: Option<Instant>,
+    last_crank_event: Option<(u16, u16)>,
+    last_crank_changed_at: Option<Instant>,
     trainer_connected: bool,
     hr_connected: bool,
     trainer_device_path: Option<String>,
@@ -52,6 +57,7 @@ struct BleSharedState {
 #[derive(Debug)]
 struct NotifySubscription {
     id: u64,
+    kind: NotifyKind,
     abort_handle: AbortHandle,
 }
 
@@ -246,48 +252,56 @@ async fn run_ble_session(
             {
                 tracing::info!("FTMS trainer disconnected in BlueZ");
                 let device_path = guard.trainer_device_path.clone();
-                clear_device_subscriptions(&mut guard, device_path.as_deref());
-                guard.trainer_connected = false;
-                guard.trainer_device_path = None;
-                guard.control_point = None;
+                clear_device_subscriptions(&mut guard, device_path.as_deref(), true);
+                clear_trainer_state(&mut guard);
             }
             if guard.hr_connected
                 && !is_device_connected_in_objects(&objects, guard.hr_device_path.as_deref())
             {
                 tracing::info!("BLE Heart Rate sensor disconnected in BlueZ");
                 let device_path = guard.hr_device_path.clone();
-                clear_device_subscriptions(&mut guard, device_path.as_deref());
-                guard.hr_connected = false;
-                guard.hr_device_path = None;
+                clear_device_subscriptions(&mut guard, device_path.as_deref(), false);
+                clear_hr_state(&mut guard);
             }
             (!guard.trainer_connected, !guard.hr_connected)
         };
 
         if need_trainer || need_hr {
             let known_before = extract_relevant_devices(&objects);
-            let missing_ftms = need_trainer && !known_before.iter().any(|d| d.is_ftms);
+            let missing_trainer =
+                need_trainer && !known_before.iter().any(|d| d.is_ftms || d.is_cps);
             let missing_hr = need_hr && !known_before.iter().any(|d| d.is_hr);
             let run_discovery =
-                manual_scan_requested || missing_ftms || missing_hr || cycle.is_multiple_of(4);
+                manual_scan_requested || missing_trainer || missing_hr || cycle.is_multiple_of(4);
             manual_scan_requested = false;
-            let mut stop_discovery = false;
 
             if run_discovery
                 && let Ok(adapter) =
                     zbus::Proxy::new(conn, BLUEZ_SERVICE, adapter_path.clone(), ADAPTER_IFACE).await
             {
-                stop_discovery = adapter
+                let discovery_started = adapter
                     .call::<_, _, ()>("StartDiscovery", &())
                     .await
                     .is_ok();
                 tokio::time::sleep(Duration::from_secs(3)).await;
+                // Stop discovery before initiating GATT connections to avoid BlueZ
+                // le-connection-abort-by-local / InProgress errors on combo BT adapters.
+                if discovery_started {
+                    let _ = adapter.call::<_, _, ()>("StopDiscovery", &()).await;
+                }
                 objects = obj_mgr.get_managed_objects().await?;
             }
 
-            let candidates = extract_relevant_devices(&objects);
+            let mut candidates = extract_relevant_devices(&objects);
+            candidates.sort_by(|a, b| b.is_ftms.cmp(&a.is_ftms).then_with(|| a.name.cmp(&b.name)));
             for dev in candidates {
-                let want_dev = (need_trainer && dev.is_ftms) || (need_hr && dev.is_hr);
-                if !want_dev {
+                let (still_need_trainer, still_need_hr) = {
+                    let guard = state.read().await;
+                    (!guard.trainer_connected, !guard.hr_connected)
+                };
+                let want_trainer = still_need_trainer && (dev.is_ftms || dev.is_cps);
+                let want_hr = still_need_hr && dev.is_hr;
+                if !want_trainer && !want_hr {
                     continue;
                 }
                 if let Err(err) = ensure_device_connected(conn, &dev).await {
@@ -300,14 +314,15 @@ async fn run_ble_session(
                     continue;
                 }
                 let post_connect_objects = obj_mgr.get_managed_objects().await?;
-                bind_device_characteristics(conn, &dev, &post_connect_objects, state).await;
-            }
-
-            if stop_discovery
-                && let Ok(adapter) =
-                    zbus::Proxy::new(conn, BLUEZ_SERVICE, adapter_path, ADAPTER_IFACE).await
-            {
-                let _ = adapter.call::<_, _, ()>("StopDiscovery", &()).await;
+                bind_device_characteristics(
+                    conn,
+                    &dev,
+                    &post_connect_objects,
+                    state,
+                    want_trainer,
+                    want_hr,
+                )
+                .await;
             }
         }
 
@@ -380,11 +395,15 @@ async fn bind_device_characteristics(
     dev: &DiscoveredBleDevice,
     objects: &zbus::fdo::ManagedObjects,
     state: &Arc<RwLock<BleSharedState>>,
+    want_trainer: bool,
+    want_hr: bool,
 ) {
     let chars = find_device_characteristics(objects, &dev.object_path);
 
-    if dev.is_ftms {
-        if let Some(cp_path) = chars.get(FTMS_CONTROL_POINT_UUID) {
+    if want_trainer && (dev.is_ftms || dev.is_cps) {
+        if dev.is_ftms
+            && let Some(cp_path) = chars.get(FTMS_CONTROL_POINT_UUID)
+        {
             let mut cp_ok = false;
             if let Ok(cp_proxy) =
                 zbus::Proxy::new(conn, BLUEZ_SERVICE, cp_path.clone(), GATT_CHAR_IFACE).await
@@ -419,10 +438,21 @@ async fn bind_device_characteristics(
                 Arc::clone(state),
             )
             .await;
+        } else if let Some(cps_path) = chars.get(CYCLING_POWER_MEASUREMENT_UUID) {
+            spawn_notify_listener(
+                conn.clone(),
+                cps_path.clone(),
+                dev.object_path.clone(),
+                dev.name.clone(),
+                NotifyKind::CyclingPower,
+                Arc::clone(state),
+            )
+            .await;
         }
     }
 
-    if dev.is_hr
+    if want_hr
+        && dev.is_hr
         && let Some(hr_path) = chars.get(HR_MEASUREMENT_UUID)
     {
         spawn_notify_listener(
@@ -437,22 +467,52 @@ async fn bind_device_characteristics(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NotifyKind {
     FtmsIndoorBike,
+    CyclingPower,
     HeartRate,
 }
 
-fn clear_device_subscriptions(state: &mut BleSharedState, device_path: Option<&str>) {
+impl NotifyKind {
+    fn is_trainer(self) -> bool {
+        matches!(self, Self::FtmsIndoorBike | Self::CyclingPower)
+    }
+}
+
+fn clear_trainer_state(state: &mut BleSharedState) {
+    state.trainer_connected = false;
+    state.trainer_device_path = None;
+    state.trainer_last_seen = None;
+    state.last_crank_event = None;
+    state.last_crank_changed_at = None;
+    state.control_point = None;
+    state.sample.watts = None;
+    state.sample.cadence_rpm = None;
+    state.sample.speed_kph = None;
+}
+
+fn clear_hr_state(state: &mut BleSharedState) {
+    state.hr_connected = false;
+    state.hr_device_path = None;
+    state.hr_last_seen = None;
+    state.sample.hr_bpm = None;
+}
+
+fn clear_device_subscriptions(
+    state: &mut BleSharedState,
+    device_path: Option<&str>,
+    trainer_only: bool,
+) {
     let Some(device_path) = device_path else {
         return;
     };
     let prefix = format!("{device_path}/");
     let keys = state
         .subscribed_chars
-        .keys()
-        .filter(|path| path.starts_with(&prefix))
-        .cloned()
+        .iter()
+        .filter(|(path, sub)| path.starts_with(&prefix) && sub.kind.is_trainer() == trainer_only)
+        .map(|(path, _)| path.clone())
         .collect::<Vec<_>>();
     for key in keys {
         if let Some(subscription) = state.subscribed_chars.remove(&key) {
@@ -506,35 +566,30 @@ async fn spawn_notify_listener(
             return;
         }
         guard.subscribed_chars.remove(&listener_key);
-        match kind {
-            NotifyKind::FtmsIndoorBike => {
-                guard.trainer_connected = false;
-                guard.trainer_device_path = None;
-                guard.control_point = None;
-            }
-            NotifyKind::HeartRate => {
-                guard.hr_connected = false;
-                guard.hr_device_path = None;
-            }
+        if kind.is_trainer() {
+            clear_trainer_state(&mut guard);
+        } else {
+            clear_hr_state(&mut guard);
         }
     });
     guard.subscribed_chars.insert(
         key,
         NotifySubscription {
             id: subscription_id,
+            kind,
             abort_handle: handle.abort_handle(),
         },
     );
 }
 
-async fn apply_notify_bytes(
-    state: &Arc<RwLock<BleSharedState>>,
+fn apply_notify_bytes_to_state(
+    guard: &mut BleSharedState,
     kind: NotifyKind,
     bytes: &[u8],
     logged_first: &mut bool,
     device_name: &str,
+    now: Instant,
 ) {
-    let mut guard = state.write().await;
     match kind {
         NotifyKind::FtmsIndoorBike => {
             if let Ok(parsed) = parse_indoor_bike_data(bytes) {
@@ -550,11 +605,11 @@ async fn apply_notify_bytes(
                 if let Some(hr) = parsed.hr_bpm
                     && guard
                         .hr_last_seen
-                        .is_none_or(|ts| ts.elapsed() > SAMPLE_STALE_AFTER)
+                        .is_none_or(|ts| now.saturating_duration_since(ts) > SAMPLE_STALE_AFTER)
                 {
                     guard.sample.hr_bpm = Some(hr);
                 }
-                guard.trainer_last_seen = Some(Instant::now());
+                guard.trainer_last_seen = Some(now);
                 guard.trainer_connected = true;
                 if !*logged_first {
                     *logged_first = true;
@@ -568,10 +623,44 @@ async fn apply_notify_bytes(
                 }
             }
         }
+        NotifyKind::CyclingPower => {
+            if let Some(parsed) = parse_cycling_power_measurement(bytes) {
+                guard.sample.watts = Some(parsed.watts);
+                if let (Some(revs), Some(event_time)) =
+                    (parsed.crank_revolutions, parsed.crank_event_time)
+                {
+                    let current = (revs, event_time);
+                    if let Some(previous) = guard.last_crank_event {
+                        if let Some(rpm) = cadence_from_crank_events(previous, current) {
+                            guard.sample.cadence_rpm = Some(rpm);
+                            guard.last_crank_changed_at = Some(now);
+                        } else if guard.last_crank_changed_at.is_some_and(|changed_at| {
+                            now.saturating_duration_since(changed_at) >= CRANK_STALE_AFTER
+                        }) {
+                            guard.sample.cadence_rpm = Some(0);
+                        }
+                    } else {
+                        guard.last_crank_changed_at = Some(now);
+                    }
+                    guard.last_crank_event = Some(current);
+                }
+                guard.trainer_last_seen = Some(now);
+                guard.trainer_connected = true;
+                if !*logged_first {
+                    *logged_first = true;
+                    tracing::info!(
+                        device = %device_name,
+                        watts = parsed.watts,
+                        cadence = ?guard.sample.cadence_rpm,
+                        "Receiving BLE Cycling Power telemetry"
+                    );
+                }
+            }
+        }
         NotifyKind::HeartRate => {
             if let Some(hr) = parse_heart_rate_measurement(bytes) {
                 guard.sample.hr_bpm = Some(hr);
-                guard.hr_last_seen = Some(Instant::now());
+                guard.hr_last_seen = Some(now);
                 guard.hr_connected = true;
                 if !*logged_first {
                     *logged_first = true;
@@ -584,6 +673,24 @@ async fn apply_notify_bytes(
             }
         }
     }
+}
+
+async fn apply_notify_bytes(
+    state: &Arc<RwLock<BleSharedState>>,
+    kind: NotifyKind,
+    bytes: &[u8],
+    logged_first: &mut bool,
+    device_name: &str,
+) {
+    let mut guard = state.write().await;
+    apply_notify_bytes_to_state(
+        &mut guard,
+        kind,
+        bytes,
+        logged_first,
+        device_name,
+        Instant::now(),
+    );
 }
 
 async fn run_notify_listener(
@@ -607,17 +714,14 @@ async fn run_notify_listener(
 
     {
         let mut guard = state.write().await;
-        match kind {
-            NotifyKind::FtmsIndoorBike => {
-                guard.trainer_connected = true;
-                guard.trainer_device_path = Some(device_path.to_string());
-                guard.trainer_last_seen = Some(Instant::now());
-            }
-            NotifyKind::HeartRate => {
-                guard.hr_connected = true;
-                guard.hr_device_path = Some(device_path.to_string());
-                guard.hr_last_seen = Some(Instant::now());
-            }
+        if kind.is_trainer() {
+            guard.trainer_connected = true;
+            guard.trainer_device_path = Some(device_path.to_string());
+            guard.trainer_last_seen = Some(Instant::now());
+        } else {
+            guard.hr_connected = true;
+            guard.hr_device_path = Some(device_path.to_string());
+            guard.hr_last_seen = Some(Instant::now());
         }
     }
     tracing::info!(
@@ -694,8 +798,9 @@ fn extract_relevant_devices(objects: &zbus::fdo::ManagedObjects) -> Vec<Discover
             .map(|u| u.to_ascii_lowercase())
             .collect::<Vec<_>>();
         let is_ftms = uuids.iter().any(|u| u == FTMS_SERVICE_UUID);
+        let is_cps = uuids.iter().any(|u| u == CYCLING_POWER_SERVICE_UUID);
         let is_hr = uuids.iter().any(|u| u == HR_SERVICE_UUID);
-        if !is_ftms && !is_hr {
+        if !is_ftms && !is_cps && !is_hr {
             continue;
         }
 
@@ -714,6 +819,7 @@ fn extract_relevant_devices(objects: &zbus::fdo::ManagedObjects) -> Vec<Discover
             name,
             connected,
             is_ftms,
+            is_cps,
             is_hr,
         });
     }
@@ -773,7 +879,12 @@ fn extract_byte_array(val: &Value<'_>) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_byte_array;
+    use std::time::{Duration, Instant};
+
+    use super::{
+        BleSharedState, CRANK_STALE_AFTER, NotifyKind, apply_notify_bytes_to_state, clear_hr_state,
+        clear_trainer_state, extract_byte_array,
+    };
     use zbus::zvariant::Value;
 
     #[test]
@@ -783,5 +894,79 @@ mod tests {
 
         let wrapped = Value::Value(Box::new(Value::from(vec![0x06u8, 142])));
         assert_eq!(extract_byte_array(&wrapped), vec![0x06, 142]);
+    }
+
+    #[test]
+    fn disconnect_clears_stale_sensor_samples() {
+        let mut state = BleSharedState {
+            trainer_connected: true,
+            hr_connected: true,
+            ..BleSharedState::default()
+        };
+        state.sample.watts = Some(240);
+        state.sample.cadence_rpm = Some(92);
+        state.sample.speed_kph = Some(33.5);
+        state.sample.hr_bpm = Some(158);
+
+        clear_trainer_state(&mut state);
+        assert!(!state.trainer_connected);
+        assert_eq!(state.sample.watts, None);
+        assert_eq!(state.sample.cadence_rpm, None);
+        assert_eq!(state.sample.speed_kph, None);
+        assert_eq!(state.sample.hr_bpm, Some(158));
+
+        clear_hr_state(&mut state);
+        assert!(!state.hr_connected);
+        assert_eq!(state.sample.hr_bpm, None);
+    }
+
+    #[test]
+    fn cycling_power_cadence_holds_between_ticks_and_zeros_after_stale_timeout() {
+        let mut state = BleSharedState::default();
+        let mut logged_first = false;
+        let t0 = Instant::now();
+
+        let p1 = [0x20, 0x00, 0xc8, 0x00, 10, 0, 0, 0];
+        let p2 = [0x20, 0x00, 0xc8, 0x00, 11, 0, 0, 4]; // +1 rev in 1024 ticks = 60 rpm
+        apply_notify_bytes_to_state(
+            &mut state,
+            NotifyKind::CyclingPower,
+            &p1,
+            &mut logged_first,
+            "PowerMeter",
+            t0,
+        );
+        apply_notify_bytes_to_state(
+            &mut state,
+            NotifyKind::CyclingPower,
+            &p2,
+            &mut logged_first,
+            "PowerMeter",
+            t0 + Duration::from_secs(1),
+        );
+        assert_eq!(state.sample.watts, Some(200));
+        assert_eq!(state.sample.cadence_rpm, Some(60));
+
+        // Repeated crank event 250ms later must NOT drop cadence to 0
+        apply_notify_bytes_to_state(
+            &mut state,
+            NotifyKind::CyclingPower,
+            &p2,
+            &mut logged_first,
+            "PowerMeter",
+            t0 + Duration::from_millis(1250),
+        );
+        assert_eq!(state.sample.cadence_rpm, Some(60));
+
+        // Repeated crank event after CRANK_STALE_AFTER drops cadence cleanly to 0
+        apply_notify_bytes_to_state(
+            &mut state,
+            NotifyKind::CyclingPower,
+            &p2,
+            &mut logged_first,
+            "PowerMeter",
+            t0 + Duration::from_secs(1) + CRANK_STALE_AFTER,
+        );
+        assert_eq!(state.sample.cadence_rpm, Some(0));
     }
 }
