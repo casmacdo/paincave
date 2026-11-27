@@ -2,6 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { decryptSecret, encryptSecret } from "../src/lib/crypto.js";
 import { GARMIN_PERSONAL_API_BASE } from "../src/lib/garmin-client.js";
+import { unwrapFitZipBytes } from "../src/lib/zip-fit.js";
 
 const testEnv = env as typeof env & { ALLOWED_USER_EMAILS?: string };
 
@@ -72,6 +73,74 @@ describe("Garmin Connect Personal API Sync & Encrypted Credentials", () => {
       env.DB.prepare("DELETE FROM account"),
       env.DB.prepare("DELETE FROM user"),
     ]);
+  });
+
+  it("unwraps Garmin streaming bit-3 data-descriptor ZIP archives (local compSize = 0)", async () => {
+    const fitBytes = buildRunFitBytes();
+    const cs = new CompressionStream("deflate-raw");
+    const w = cs.writable.getWriter();
+    void w.write(fitBytes).then(() => w.close());
+    const compressed = new Uint8Array(await new Response(cs.readable).arrayBuffer());
+
+    const fileName = new TextEncoder().encode("24992576207_ACTIVITY.fit");
+    const parts: number[] = [];
+    const pushU16 = (v: number) => parts.push(v & 0xff, (v >> 8) & 0xff);
+    const pushU32 = (v: number) =>
+      parts.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff);
+
+    // Local File Header with bit-3 data descriptor flag (0x0808) and compSize = 0
+    pushU32(0x04034b50);
+    pushU16(20);
+    pushU16(0x0808);
+    pushU16(8); // deflate
+    pushU16(0);
+    pushU16(0);
+    pushU32(0); // crc in descriptor
+    pushU32(0); // compSize = 0 in local header!
+    pushU32(0); // uncompSize = 0 in local header!
+    pushU16(fileName.length);
+    pushU16(0);
+    parts.push(...fileName, ...compressed);
+    // Data descriptor
+    pushU32(0x08074b50);
+    pushU32(0);
+    pushU32(compressed.length);
+    pushU32(fitBytes.length);
+
+    const cdOffset = parts.length;
+    // Central Directory Header (has real compressed & uncompressed sizes)
+    pushU32(0x02014b50);
+    pushU16(20);
+    pushU16(20);
+    pushU16(0x0808);
+    pushU16(8);
+    pushU16(0);
+    pushU16(0);
+    pushU32(0);
+    pushU32(compressed.length);
+    pushU32(fitBytes.length);
+    pushU16(fileName.length);
+    pushU16(0);
+    pushU16(0);
+    pushU16(0);
+    pushU16(0);
+    pushU32(0);
+    pushU32(0); // local header offset
+    parts.push(...fileName);
+    const cdSize = parts.length - cdOffset;
+
+    // End of Central Directory
+    pushU32(0x06054b50);
+    pushU16(0);
+    pushU16(0);
+    pushU16(1);
+    pushU16(1);
+    pushU32(cdSize);
+    pushU32(cdOffset);
+    pushU16(0);
+
+    const extracted = await unwrapFitZipBytes(new Uint8Array(parts));
+    expect(extracted).toEqual(fitBytes);
   });
 
   it("encrypts and decrypts Garmin Personal API keys with AES-256-GCM", async () => {

@@ -10,6 +10,7 @@ import {
 } from "@paincave/shared";
 import type { HonoAppContext } from "../types.js";
 import { requireUiAuth } from "../lib/auth.js";
+import { unwrapFitZipBytes } from "../lib/zip-fit.js";
 
 interface RouteRow {
   id: string;
@@ -229,7 +230,8 @@ export function createRouteRoutes(): Hono<HonoAppContext> {
 
     let analyzed;
     try {
-      const fitBytes = new Uint8Array(await fitObj.arrayBuffer());
+      const rawBytes = new Uint8Array(await fitObj.arrayBuffer());
+      const fitBytes = await unwrapFitZipBytes(rawBytes);
       const parsed = parseFitRecords(fitBytes);
       analyzed = extractRouteFromSamples(parsed.samples, `${ride.name} Route`);
     } catch (err) {

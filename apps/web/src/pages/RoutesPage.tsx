@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { RoutePayload, RoutePoint } from "@paincave/shared";
 import { api, type RideRecord, type RouteRecord, type WorkoutRecord } from "../lib/api.js";
 import { RouteElevationMap } from "../components/RouteElevationMap.js";
+import { useI18n } from "../lib/i18n.js";
 
 interface RoutesPageProps {
   onLoadRoute: (route: RoutePayload) => void;
@@ -9,6 +10,8 @@ interface RoutesPageProps {
 }
 
 export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPageProps) {
+  const { locale } = useI18n();
+  const isFr = locale === "fr-CA";
   const [routes, setRoutes] = useState<RouteRecord[]>([]);
   const [workouts, setWorkouts] = useState<WorkoutRecord[]>([]);
   const [rides, setRides] = useState<RideRecord[]>([]);
@@ -178,9 +181,13 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Routes &amp; SIM Mode</h1>
+          <h1 className="text-2xl font-bold text-white">
+            {isFr ? "Parcours et mode SIM" : "Routes & SIM Mode"}
+          </h1>
           <p className="mt-0.5 text-sm text-zinc-400">
-            Import GPX courses, ride real elevation gradients in SIM mode, or pair a virtual route with ERG workouts.
+            {isFr
+              ? "Importez des tracés GPX, roulez de vraies pentes en mode SIM ou associez un parcours virtuel à un entraînement ERG."
+              : "Import GPX courses, ride real elevation gradients in SIM mode, or pair a virtual route with ERG workouts."}
           </p>
         </div>
 
@@ -199,7 +206,13 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
             onClick={() => fileInputRef.current?.click()}
             className="rounded-lg bg-orange-500 px-3.5 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400 disabled:opacity-60"
           >
-            {uploading ? "Importing..." : "Import .gpx Route"}
+            {uploading
+              ? isFr
+                ? "Importation..."
+                : "Importing..."
+              : isFr
+                ? "Importer un parcours .gpx"
+                : "Import .gpx Route"}
           </button>
         </div>
       </div>
@@ -207,7 +220,7 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
       {rides.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-3 text-xs">
           <span className="font-semibold uppercase tracking-wider text-zinc-400">
-            Extract from FIT Ride:
+            {isFr ? "Extraire d'une sortie FIT :" : "Extract from FIT Ride:"}
           </span>
           <select
             aria-label="Select ride to extract GPS route"
@@ -227,7 +240,13 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
             onClick={() => void handleExtractFromRide()}
             className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
           >
-            {extracting ? "Extracting..." : "Extract GPS Track"}
+            {extracting
+              ? isFr
+                ? "Extraction..."
+                : "Extracting..."
+              : isFr
+                ? "Extraire le tracé GPS"
+                : "Extract GPS Track"}
           </button>
         </div>
       )}
@@ -334,9 +353,13 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
               <div className="space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-base font-bold text-white">Ride Setup</h2>
+                    <h2 className="text-base font-bold text-white">
+                      {isFr ? "Configuration de la sortie" : "Ride Setup"}
+                    </h2>
                     <p className="text-xs text-zinc-400">
-                      Uploads cleanly to Strava as a VirtualRide with map &amp; elevation (no outdoor KOM flags).
+                      {isFr
+                        ? "Téléversement propre sur Strava en sortie virtuelle (VirtualRide) avec carte et dénivelé."
+                        : "Uploads cleanly to Strava as a VirtualRide with map & elevation (no outdoor KOM flags)."}
                     </p>
                   </div>
 
@@ -355,7 +378,7 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
                           : "text-zinc-400 hover:text-white"
                       }`}
                     >
-                      SIM Mode (Free Ride)
+                      {isFr ? "Mode SIM (Sortie libre)" : "SIM Mode (Free Ride)"}
                     </button>
                     <button
                       type="button"
@@ -367,7 +390,7 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
                           : "text-zinc-400 hover:text-white"
                       }`}
                     >
-                      ERG Workout + Route
+                      {isFr ? "Entraînement ERG + Parcours" : "ERG Workout + Route"}
                     </button>
                   </div>
                 </div>
@@ -376,7 +399,7 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
                   <div className="space-y-2 rounded-xl bg-zinc-950/70 p-3.5">
                     <div className="flex items-center justify-between text-xs">
                       <label htmlFor="trainer-difficulty-slider" className="font-semibold text-zinc-200">
-                        Trainer Difficulty
+                        {isFr ? "Difficulté de la base" : "Trainer Difficulty"}
                       </label>
                       <span className="font-bold tabular-nums text-orange-400">{difficultyPct}%</span>
                     </div>
@@ -391,7 +414,9 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
                       className="w-full accent-orange-500"
                     />
                     <p className="text-[11px] text-zinc-500">
-                      Scales road gradient felt on the trainer (e.g. 50% turns an 8% climb into 4% resistance while keeping full virtual climbing physics).
+                      {isFr
+                        ? "Ajuste la pente ressentie sur la base (ex. 50 % transforme une côte de 8 % en 4 % de résistance tout en gardant la physique d'ascension virtuelle)."
+                        : "Scales road gradient felt on the trainer (e.g. 50% turns an 8% climb into 4% resistance while keeping full virtual climbing physics)."}
                     </p>
                   </div>
                 ) : (
@@ -400,7 +425,7 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
                       htmlFor="route-erg-workout"
                       className="block text-xs font-semibold text-zinc-200"
                     >
-                      Structured ERG Workout
+                      {isFr ? "Entraînement ERG structuré" : "Structured ERG Workout"}
                     </label>
                     <select
                       id="route-erg-workout"
@@ -409,7 +434,9 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
                       className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white focus:border-orange-500 focus:outline-none"
                     >
                       {workouts.length === 0 ? (
-                        <option value="">No workouts in library</option>
+                        <option value="">
+                          {isFr ? "Aucun entraînement enregistré" : "No workouts in library"}
+                        </option>
                       ) : (
                         workouts.map((w) => (
                           <option key={w.id} value={w.id}>
@@ -419,7 +446,9 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
                       )}
                     </select>
                     <p className="text-[11px] text-zinc-500">
-                      Trainer follows ERG power targets while real road physics moves you along this route and saves GPS/elevation to the FIT file.
+                      {isFr
+                        ? "La base suit vos cibles de puissance ERG pendant que la physique routière vous fait avancer sur ce parcours avec trace GPS et dénivelé dans le fichier FIT."
+                        : "Trainer follows ERG power targets while real road physics moves you along this route and saves GPS/elevation to the FIT file."}
                     </p>
                   </div>
                 )}
@@ -432,7 +461,7 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
                       onChange={(e) => setLoopRoute(e.target.checked)}
                       className="h-4 w-4 rounded border-zinc-600 bg-zinc-950 accent-orange-500"
                     />
-                    Loop route continuously
+                    {isFr ? "Boucler le parcours en continu" : "Loop route continuously"}
                   </label>
 
                   <button
@@ -446,7 +475,13 @@ export function RoutesPage({ onLoadRoute, onLoadWorkoutWithRoute }: RoutesPagePr
                     onClick={() => void handleLaunch()}
                     className="rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-bold text-zinc-950 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {launching ? "Loading..." : "Load Route on Trainer"}
+                    {launching
+                      ? isFr
+                        ? "Chargement..."
+                        : "Loading..."
+                      : isFr
+                        ? "Charger le parcours sur la base"
+                        : "Load Route on Trainer"}
                   </button>
                 </div>
               </div>

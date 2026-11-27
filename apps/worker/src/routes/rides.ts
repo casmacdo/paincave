@@ -6,6 +6,7 @@ import { requireBridgeOrUiAuth, requireUiAuth } from "../lib/auth.js";
 import { ingestRide, type RideRow } from "../lib/rides-service.js";
 import { recomputePmcFromDay } from "../lib/pmc-store.js";
 import { uploadFitToStrava } from "../lib/strava-client.js";
+import { unwrapFitZipBytes } from "../lib/zip-fit.js";
 
 const PatchRideSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
@@ -238,7 +239,8 @@ export function createRideRoutes(): Hono<HonoAppContext> {
     }
 
     try {
-      const bytes = new Uint8Array(await obj.arrayBuffer());
+      const rawBytes = new Uint8Array(await obj.arrayBuffer());
+      const bytes = await unwrapFitZipBytes(rawBytes);
       const parsed = parseFitRecords(bytes);
       const points = downsampleRecords(parsed.samples, bucketSeconds);
       return c.json({
@@ -273,7 +275,10 @@ export function createRideRoutes(): Hono<HonoAppContext> {
       return c.json({ error: "FIT file not found in R2" }, 404);
     }
 
-    return new Response(obj.body, {
+    const rawBytes = new Uint8Array(await obj.arrayBuffer());
+    const fitBytes = await unwrapFitZipBytes(rawBytes);
+
+    return new Response(fitBytes, {
       status: 200,
       headers: {
         "Content-Type": "application/vnd.ant.fit",

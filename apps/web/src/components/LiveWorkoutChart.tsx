@@ -276,7 +276,7 @@ export function LiveWorkoutChart({
     const isDark = theme === "dark";
     const axisStroke = isDark ? "#9e9487" : "#5c5449";
     const gridStroke = isDark ? "#2d2823" : "#dfd8ca";
-    const powerStroke = isDark ? "#d97745" : "#b8562b";
+    const powerStroke = isDark ? "#52a67d" : "#2d6a4f";
     const hrStroke = isDark ? "#df6e6e" : "#a63d3d";
     const targetStroke = isDark ? "#787065" : "#8c8273";
 

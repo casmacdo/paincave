@@ -401,7 +401,7 @@ export function CalendarPage({
                           disabled={updatingId === s.id}
                           className="rounded-lg border border-zinc-700 px-2.5 py-2 text-xs font-semibold text-zinc-300 hover:border-zinc-500 hover:text-white disabled:opacity-50"
                         >
-                          {s.status === "skipped" ? "Restore" : "Skip"}
+                          {s.status === "skipped" ? t("calendar.restore") : t("calendar.skip")}
                         </button>
                       </>
                     )}
@@ -411,7 +411,7 @@ export function CalendarPage({
                         onClick={() => void onLoadWorkout(s.workout_id, s.id)}
                         className="rounded-lg bg-orange-500 px-3.5 py-2 text-xs font-bold text-zinc-950 hover:bg-orange-400"
                       >
-                        Load on Trainer
+                        {t("calendar.load_trainer")}
                       </button>
                     )}
                     <button
@@ -420,7 +420,7 @@ export function CalendarPage({
                       disabled={deletingId === s.id}
                       className="rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-300 hover:border-rose-400 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {deletingId === s.id ? "Removing..." : "Remove"}
+                      {deletingId === s.id ? "..." : t("calendar.remove")}
                     </button>
                   </div>
                 </div>
@@ -456,7 +456,7 @@ export function CalendarPage({
                         disabled={deletingId === r.ride_uuid}
                         className="rounded-lg border border-rose-500/40 px-2.5 py-1.5 text-xs font-semibold text-rose-300 hover:border-rose-400 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {deletingId === r.ride_uuid ? "Deleting..." : "Delete"}
+                        {deletingId === r.ride_uuid ? "..." : t("calendar.delete")}
                       </button>
                     </div>
                   </div>

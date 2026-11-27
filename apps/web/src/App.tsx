@@ -174,8 +174,9 @@ function AppShell() {
           <div className="flex flex-wrap items-center gap-5">
             <button
               type="button"
+              aria-label="PainCave"
               onClick={() => setTab("overview")}
-              className="text-xl font-black tracking-tight text-white"
+              className="cursor-pointer text-xl font-black tracking-tight text-white"
             >
               Pain<span className="text-orange-500">Cave</span>
             </button>
@@ -185,7 +186,7 @@ function AppShell() {
                   key={key}
                   type="button"
                   onClick={() => setTab(key)}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                  className={`cursor-pointer rounded-lg px-3 py-1.5 text-sm font-medium transition ${
                     tab === key
                       ? "bg-orange-500 font-bold text-zinc-950"
                       : "text-zinc-400 hover:bg-zinc-800 hover:text-white"

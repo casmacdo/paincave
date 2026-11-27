@@ -13,10 +13,10 @@
   --pc-text: #1f1d1a;
   --pc-text-secondary: #4a443d;
   --pc-text-muted: #635a4f;
-  --pc-accent: #b8562b;
-  --pc-accent-hover: #9a4420;
-  --pc-sage: #2e6f56;
-  --pc-sage-hover: #235843;
+  --pc-accent: #2d6a4f;
+  --pc-accent-hover: #21523c;
+  --pc-sage: #387556;
+  --pc-sage-hover: #295c42;
   --pc-river: #2c6478;
   --pc-rust: #a63d3d;
   --pc-rust-hover: #872f2f;
@@ -44,10 +44,10 @@ html.dark {
   --pc-text: #f5f0e8;
   --pc-text-secondary: #d4cbc0;
   --pc-text-muted: #9e9487;
-  --pc-accent: #d97745;
-  --pc-accent-hover: #e58858;
-  --pc-sage: #4ea381;
-  --pc-sage-hover: #5eb894;
+  --pc-accent: #52a67d;
+  --pc-accent-hover: #66ba91;
+  --pc-sage: #5cb38a;
+  --pc-sage-hover: #72c79f;
   --pc-river: #5ca2bc;
   --pc-rust: #df6e6e;
   --pc-rust-hover: #eb8484;
@@ -73,7 +73,7 @@ html.dark {
 }
 
 /* ==========================================================================
-   Warm Espresso Dark Mode
+   Warm Espresso Dark Mode with Earthy Forest / Eucalyptus Green Accent
    ========================================================================== */
 html.dark .bg-zinc-950,
 html.dark .bg-zinc-950\/95,
@@ -117,12 +117,51 @@ html.dark .bg-orange-500:hover,
 html.dark .hover\:bg-orange-400:hover {
   background-color: var(--pc-accent-hover) !important;
 }
+html.dark .bg-orange-500\/80 {
+  background-color: rgba(82, 166, 125, 0.82) !important;
+}
+html.dark .bg-orange-500\/10,
+html.dark .bg-orange-500\/15,
+html.dark .bg-orange-500\/20 {
+  background-color: rgba(82, 166, 125, 0.14) !important;
+}
+html.dark .hover\:bg-orange-500\/20:hover,
+html.dark .hover\:bg-orange-500\/25:hover {
+  background-color: rgba(82, 166, 125, 0.24) !important;
+}
+html.dark .border-orange-500,
+html.dark .border-orange-400,
+html.dark .focus\:border-orange-500:focus {
+  border-color: var(--pc-accent) !important;
+}
+html.dark .border-orange-500\/30,
+html.dark .border-orange-500\/40,
+html.dark .border-orange-500\/60,
+html.dark .border-orange-500\/70 {
+  border-color: rgba(82, 166, 125, 0.42) !important;
+}
+html.dark .text-orange-500,
+html.dark .text-orange-400,
+html.dark .text-orange-300,
+html.dark .text-orange-200,
+html.dark .text-orange-100 {
+  color: var(--pc-accent) !important;
+}
+html.dark .hover\:text-orange-300:hover {
+  color: var(--pc-accent-hover) !important;
+}
+html.dark .bg-orange-400 {
+  background-color: var(--pc-accent) !important;
+}
 html.dark .accent-orange-500 {
   accent-color: var(--pc-accent);
 }
+html.dark .bg-orange-500 .bg-emerald-400 {
+  background-color: #141210 !important;
+}
 
 /* ==========================================================================
-   Earthy Light Mode (Default): Warm Oat Linen, Paper, Sand, Terracotta & Sage
+   Earthy Light Mode (Default): Warm Oat Linen, Paper, Sand & Forest Green
    Covers 100% of Tailwind surface, border, text, hover, focus & badge classes.
    ========================================================================== */
 
@@ -227,7 +266,7 @@ html:not(.dark) .placeholder\:text-zinc-500::placeholder {
   color: #8c8273 !important;
 }
 
-/* Primary Terracotta Accent & Solid Action Buttons */
+/* Primary Forest Pine Green Accent & Solid Action Buttons */
 html:not(.dark) .bg-orange-500 {
   background-color: var(--pc-accent) !important;
   color: #fcfaf5 !important;
@@ -249,16 +288,16 @@ html:not(.dark) .bg-orange-500 .bg-zinc-200 {
   background-color: #fcfaf5 !important;
 }
 html:not(.dark) .bg-orange-500\/80 {
-  background-color: rgba(184, 86, 43, 0.85) !important;
+  background-color: rgba(45, 106, 79, 0.85) !important;
 }
 html:not(.dark) .bg-orange-500\/10,
 html:not(.dark) .bg-orange-500\/15,
 html:not(.dark) .bg-orange-500\/20 {
-  background-color: rgba(184, 86, 43, 0.12) !important;
+  background-color: rgba(45, 106, 79, 0.11) !important;
 }
 html:not(.dark) .hover\:bg-orange-500\/20:hover,
 html:not(.dark) .hover\:bg-orange-500\/25:hover {
-  background-color: rgba(184, 86, 43, 0.2) !important;
+  background-color: rgba(45, 106, 79, 0.19) !important;
 }
 html:not(.dark) .border-orange-500,
 html:not(.dark) .border-orange-400 {
@@ -268,7 +307,7 @@ html:not(.dark) .border-orange-500\/30,
 html:not(.dark) .border-orange-500\/40,
 html:not(.dark) .border-orange-500\/60,
 html:not(.dark) .border-orange-500\/70 {
-  border-color: rgba(184, 86, 43, 0.36) !important;
+  border-color: rgba(45, 106, 79, 0.36) !important;
 }
 html:not(.dark) .accent-orange-500 {
   accent-color: var(--pc-accent);
@@ -298,10 +337,10 @@ html:not(.dark) .bg-zinc-200.text-zinc-950 {
 html:not(.dark) .bg-emerald-500\/10,
 html:not(.dark) .bg-emerald-500\/15,
 html:not(.dark) .bg-emerald-500\/20 {
-  background-color: rgba(46, 111, 86, 0.11) !important;
+  background-color: rgba(56, 117, 86, 0.11) !important;
 }
 html:not(.dark) .hover\:bg-emerald-500\/20:hover {
-  background-color: rgba(46, 111, 86, 0.19) !important;
+  background-color: rgba(56, 117, 86, 0.19) !important;
 }
 html:not(.dark) .border-emerald-500,
 html:not(.dark) .border-emerald-400 {
@@ -309,7 +348,7 @@ html:not(.dark) .border-emerald-400 {
 }
 html:not(.dark) .border-emerald-500\/30,
 html:not(.dark) .border-emerald-500\/40 {
-  border-color: rgba(46, 111, 86, 0.34) !important;
+  border-color: rgba(56, 117, 86, 0.34) !important;
 }
 html:not(.dark) .bg-sky-500\/15,
 html:not(.dark) .bg-sky-500\/20,
@@ -474,7 +513,7 @@ html:not(.dark) .bg-lime-400 {
   background-color: var(--pc-olive) !important;
 }
 
-/* Keep connected green dot crisp when rendered inside an active terracotta pill */
+/* Keep connected green dot crisp when rendered inside an active forest-green pill */
 html:not(.dark) .bg-orange-500 .bg-emerald-400 {
   background-color: #a7f3d0 !important;
 }

@@ -1,4 +1,5 @@
 import type { ActivitySport } from "./rides-service.js";
+import { unwrapFitZipBytes } from "./zip-fit.js";
 
 export const GARMIN_PERSONAL_API_BASE = "https://personal.connectapi.garmin.com";
 
@@ -290,58 +291,6 @@ export async function fetchGarminActivities(
   return out;
 }
 
-/**
- * Extracts a `.fit` file from a ZIP container if Garmin wraps the activity file in a ZIP archive.
- */
-async function unwrapZipIfNeeded(bytes: Uint8Array): Promise<Uint8Array> {
-  // ZIP local file header signature: 0x50 0x4b 0x03 0x04 ("PK\x03\x04")
-  if (
-    bytes.length < 30 ||
-    bytes[0] !== 0x50 ||
-    bytes[1] !== 0x4b ||
-    bytes[2] !== 0x03 ||
-    bytes[3] !== 0x04
-  ) {
-    return bytes;
-  }
-
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let offset = 0;
-
-  while (offset + 30 <= bytes.length) {
-    if (view.getUint32(offset, true) !== 0x04034b50) break;
-    const method = view.getUint16(offset + 8, true);
-    const compSize = view.getUint32(offset + 18, true);
-    const nameLen = view.getUint16(offset + 26, true);
-    const extraLen = view.getUint16(offset + 28, true);
-    const nameStart = offset + 30;
-    const dataStart = nameStart + nameLen + extraLen;
-    const fileName = new TextDecoder().decode(bytes.subarray(nameStart, nameStart + nameLen)).toLowerCase();
-
-    if (compSize > 0 && dataStart + compSize <= bytes.length) {
-      const payload = bytes.subarray(dataStart, dataStart + compSize);
-      if (fileName.endsWith(".fit") || offset === 0) {
-        if (method === 0) {
-          return payload;
-        }
-        if (method === 8) {
-          const ds = new DecompressionStream("deflate-raw");
-          const writer = ds.writable.getWriter();
-          await writer.write(payload);
-          await writer.close();
-          const outBuf = await new Response(ds.readable).arrayBuffer();
-          return new Uint8Array(outBuf);
-        }
-      }
-      offset = dataStart + compSize;
-    } else {
-      break;
-    }
-  }
-
-  return bytes;
-}
-
 export async function downloadGarminActivityFit(
   jwt: string,
   activityId: string
@@ -364,7 +313,7 @@ export async function downloadGarminActivityFit(
 
   const rawBytes = new Uint8Array(await resp.arrayBuffer());
   if (rawBytes.byteLength < 14) return null;
-  return unwrapZipIfNeeded(rawBytes);
+  return unwrapFitZipBytes(rawBytes);
 }
 
 async function fetchOptionalJson(jwt: string, url: string, context: string): Promise<unknown> {
