@@ -32,10 +32,6 @@ const MESSAGES = {
   "nav.bridge_connected": { "fr-CA": "Base connectée", en: "Bridge Connected" },
   "nav.bridge_offline": { "fr-CA": "Base hors ligne", en: "Bridge Offline" },
   "nav.loading": { "fr-CA": "Chargement de", en: "Loading" },
-  "theme.light": { "fr-CA": "Clair", en: "Light" },
-  "theme.dark": { "fr-CA": "Sombre", en: "Dark" },
-  "theme.toggle_title": { "fr-CA": "Basculer le mode clair/sombre", en: "Toggle light/dark mode" },
-
   // Overview page
   "overview.title": { "fr-CA": "Aperçu santé et entraînement", en: "Health & Training Overview" },
   "overview.subtitle": {

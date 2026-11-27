@@ -17,6 +17,8 @@ afterEach(() => {
 
 describe("OverviewPage, persistent Trainer dropdown, Quebec French i18n, Light Mode, and clean Settings UX", () => {
   it("renders Overview in Quebec French by default, defaults to Light Mode, and avoids internal jargon", async () => {
+    window.localStorage.setItem("paincave_theme", "dark");
+    document.documentElement.classList.add("dark");
     vi.spyOn(api, "getFitnessOverview").mockResolvedValue({
       current_pmc: { day: "2026-11-27", ctl: 48, atl: 52, tsb: -4, ramp_rate_7d: 2.1 },
       daily_pmc: [],
@@ -81,6 +83,7 @@ describe("OverviewPage, persistent Trainer dropdown, Quebec French i18n, Light M
     expect(screen.getByText("Mémoire IA")).toBeTruthy();
     expect(screen.getByText("Mollet gauche sensible en côte")).toBeTruthy();
     expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(window.localStorage.getItem("paincave_theme")).toBeNull();
     expect(container.textContent?.toLowerCase()).not.toContain("hub");
   });
 

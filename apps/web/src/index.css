@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @import "uplot/dist/uPlot.min.css";
-@custom-variant dark (&:where(.dark, .dark *));
 
 :root {
   color-scheme: light;
@@ -33,131 +32,12 @@
   --pc-route-track: #8c8273;
 }
 
-html.dark {
-  color-scheme: dark;
-  --pc-bg: #141210;
-  --pc-card: #1d1a17;
-  --pc-inset: #26221e;
-  --pc-hover: #312c27;
-  --pc-border: #332d27;
-  --pc-border-strong: #473f37;
-  --pc-text: #f5f0e8;
-  --pc-text-secondary: #d4cbc0;
-  --pc-text-muted: #9e9487;
-  --pc-accent: #52a67d;
-  --pc-accent-hover: #66ba91;
-  --pc-sage: #5cb38a;
-  --pc-sage-hover: #72c79f;
-  --pc-river: #5ca2bc;
-  --pc-rust: #df6e6e;
-  --pc-rust-hover: #eb8484;
-  --pc-ochre: #d8a244;
-  --pc-ochre-hover: #e4b45c;
-  --pc-plum: #a482ba;
-  --pc-olive: #8eb34d;
-  --pc-chart-bg: #171411;
-  --pc-chart-grid: #2d2823;
-  --pc-chart-zero: #524a42;
-  --pc-chart-axis: #9e9487;
-  --pc-chart-cursor: #d4cbc0;
-  --pc-chart-dot-stroke: #171411;
-  --pc-route-track: #787065;
-}
-
 @layer base {
   body {
     font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background-color: var(--pc-bg);
     color: var(--pc-text);
   }
-}
-
-/* ==========================================================================
-   Warm Espresso Dark Mode with Earthy Forest / Eucalyptus Green Accent
-   ========================================================================== */
-html.dark .bg-zinc-950,
-html.dark .bg-zinc-950\/95,
-html.dark .bg-zinc-950\/90,
-html.dark .bg-zinc-950\/80,
-html.dark .bg-zinc-950\/70,
-html.dark .bg-zinc-950\/60,
-html.dark .bg-zinc-950\/50 {
-  background-color: var(--pc-bg) !important;
-}
-html.dark .bg-zinc-900,
-html.dark .bg-zinc-900\/80,
-html.dark .bg-zinc-900\/70,
-html.dark .bg-zinc-900\/60,
-html.dark .bg-zinc-900\/50 {
-  background-color: var(--pc-card) !important;
-}
-html.dark .bg-zinc-800,
-html.dark .bg-zinc-800\/80 {
-  background-color: var(--pc-inset) !important;
-}
-html.dark .hover\:bg-zinc-800:hover,
-html.dark .hover\:bg-zinc-700:hover {
-  background-color: var(--pc-hover) !important;
-}
-html.dark .border-zinc-800,
-html.dark .border-zinc-800\/80,
-html.dark .border-zinc-800\/70,
-html.dark .border-zinc-800\/50 {
-  border-color: var(--pc-border) !important;
-}
-html.dark .border-zinc-700,
-html.dark .border-zinc-600 {
-  border-color: var(--pc-border-strong) !important;
-}
-html.dark .bg-orange-500 {
-  background-color: var(--pc-accent) !important;
-  color: #141210 !important;
-}
-html.dark .bg-orange-500:hover,
-html.dark .hover\:bg-orange-400:hover {
-  background-color: var(--pc-accent-hover) !important;
-}
-html.dark .bg-orange-500\/80 {
-  background-color: rgba(82, 166, 125, 0.82) !important;
-}
-html.dark .bg-orange-500\/10,
-html.dark .bg-orange-500\/15,
-html.dark .bg-orange-500\/20 {
-  background-color: rgba(82, 166, 125, 0.14) !important;
-}
-html.dark .hover\:bg-orange-500\/20:hover,
-html.dark .hover\:bg-orange-500\/25:hover {
-  background-color: rgba(82, 166, 125, 0.24) !important;
-}
-html.dark .border-orange-500,
-html.dark .border-orange-400,
-html.dark .focus\:border-orange-500:focus {
-  border-color: var(--pc-accent) !important;
-}
-html.dark .border-orange-500\/30,
-html.dark .border-orange-500\/40,
-html.dark .border-orange-500\/60,
-html.dark .border-orange-500\/70 {
-  border-color: rgba(82, 166, 125, 0.42) !important;
-}
-html.dark .text-orange-500,
-html.dark .text-orange-400,
-html.dark .text-orange-300,
-html.dark .text-orange-200,
-html.dark .text-orange-100 {
-  color: var(--pc-accent) !important;
-}
-html.dark .hover\:text-orange-300:hover {
-  color: var(--pc-accent-hover) !important;
-}
-html.dark .bg-orange-400 {
-  background-color: var(--pc-accent) !important;
-}
-html.dark .accent-orange-500 {
-  accent-color: var(--pc-accent);
-}
-html.dark .bg-orange-500 .bg-emerald-400 {
-  background-color: #141210 !important;
 }
 
 /* ==========================================================================
