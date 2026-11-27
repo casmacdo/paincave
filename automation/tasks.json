@@ -485,6 +485,281 @@
       "verify_cmd": "cargo build --release && npm run build && ./scripts/verify.sh --strict",
       "notes": "Deployment runbook written; release Rust build, web build, wrangler deploy --dry-run, and strict hygiene/verify passed",
       "updated_at": "2026-11-26T20:11:51.250Z"
+    },
+    {
+      "id": "M8-01",
+      "milestone": "M8",
+      "title": "Add D1 migration 0005_multi_user_health.sql (user_id isolation, multi-sport rides/workouts, activity_laps, daily_biometrics, provider_connections, user_device_tokens)",
+      "status": "pending",
+      "depends_on": [
+        "M7-02"
+      ],
+      "files_expected": [
+        "apps/worker/migrations/0005_multi_user_health.sql",
+        "apps/worker/test/migrations-multi-user.test.ts"
+      ],
+      "acceptance_criteria": [
+        "Rebuilds athlete_profile, daily_pmc, and provider_connections with user_id in primary keys while preserving existing single-owner rows",
+        "Adds user_id and multi-sport columns (sport, distance_m, elevation_gain_m, avg_pace_s_per_km, gap_s_per_km, pa_hr_decoupling, external_provider/id) to rides, workouts, thresholds, planned_sessions, training_blocks, coaching_notes, routes, and MCP OAuth tables",
+        "Creates activity_laps, daily_biometrics, and user_device_tokens tables with composite indexes",
+        "Migration test verifies clean application over 0001-0004 with pre-populated single-user data intact"
+      ],
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test && ./scripts/verify.sh --strict"
+    },
+    {
+      "id": "M8-02",
+      "milestone": "M8",
+      "title": "Implement ALLOWED_USER_EMAILS allowlist auth, request-scoped userId resolution, and per-user MCP OAuth & device tokens",
+      "status": "pending",
+      "depends_on": [
+        "M8-01"
+      ],
+      "files_expected": [
+        "apps/worker/src/types.ts",
+        "apps/worker/src/lib/better-auth.ts",
+        "apps/worker/src/lib/auth.ts",
+        "apps/worker/src/mcp/oauth.ts",
+        "apps/worker/src/routes/auth.ts",
+        "apps/worker/test/better-auth.test.ts"
+      ],
+      "acceptance_criteria": [
+        "ALLOWED_USER_EMAILS allows multiple allowlisted emails to register via Google/Email/Passkey while blocking unlisted emails with 403 (keeps single-owner lock when unset)",
+        "Every authenticated request resolves a typed userId on Hono context from Better Auth session, per-user MCP OAuth token, per-user device token, or legacy primary-owner fallback",
+        "MCP OAuth /oauth/authorize binds issued codes and tokens to the approving userId",
+        "Auth tests verify allowlist acceptance, non-allowlisted 403 rejection, and per-user MCP token binding"
+      ],
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run lint && npm --workspace @paincave/worker run test"
+    },
+    {
+      "id": "M8-03",
+      "milestone": "M8",
+      "title": "Scope all Worker APIs, R2 object keys, and MCP tools by userId with cross-user isolation tests and sport-aware PWA navigation",
+      "status": "pending",
+      "depends_on": [
+        "M8-02"
+      ],
+      "files_expected": [
+        "apps/worker/src/routes/athlete.ts",
+        "apps/worker/src/routes/rides.ts",
+        "apps/worker/src/routes/workouts.ts",
+        "apps/worker/src/routes/calendar.ts",
+        "apps/worker/src/routes/fitness.ts",
+        "apps/worker/src/routes/routes.ts",
+        "apps/worker/src/routes/strava.ts",
+        "apps/worker/src/mcp/read-tools.ts",
+        "apps/worker/src/mcp/write-tools.ts",
+        "apps/worker/test/multi-user-isolation.test.ts",
+        "apps/web/src/App.tsx",
+        "apps/web/src/pages/SettingsPage.tsx"
+      ],
+      "acceptance_criteria": [
+        "All D1 reads/writes across REST routes and MCP tools require explicit userId and isolate rows cleanly",
+        "New R2 uploads use users/{userId}/... prefixes while legacy r2_fit_key paths remain readable for owner rows",
+        "Cross-user isolation Vitest suite proves User B cannot read, list, update, delete, or MCP-query User A rides, workouts, thresholds, notes, or calendar",
+        "PWA reads athlete_profile.features_json.indoor_trainer to hide KICKR Ride/Routes tabs for non-trainer users with toggle in Settings"
+      ],
+      "verify_cmd": "./scripts/verify.sh --strict"
+    },
+    {
+      "id": "M9-01",
+      "milestone": "M9",
+      "title": "Extend shared FIT parser for multi-sport activities/laps and implement running physiology engine (GAP, Pa:HR decoupling, rTSS/hrTSS, best efforts)",
+      "status": "pending",
+      "depends_on": [
+        "M8-01"
+      ],
+      "files_expected": [
+        "packages/shared/src/fit/reader.ts",
+        "packages/shared/src/physiology/running.ts",
+        "packages/shared/src/physiology/__tests__/running.test.ts",
+        "packages/shared/src/fit/__tests__/reader.test.ts"
+      ],
+      "acceptance_criteria": [
+        "FIT reader decodes session sport/sub_sport/distance/ascent and msg 19 lap splits (auto-generating 1km splits when laps are absent)",
+        "Running physiology computes Grade Adjusted Pace (GAP), Pa:HR aerobic decoupling, rTSS with hrTSS fallback, and distance best efforts (400m/1k/5k/10k)",
+        "Deterministic unit tests cover flat runs, hilly runs, interval track sessions, and missing-GPS treadmill runs"
+      ],
+      "verify_cmd": "npm --workspace @paincave/shared run typecheck && npm --workspace @paincave/shared run test"
+    },
+    {
+      "id": "M9-02",
+      "milestone": "M9",
+      "title": "Implement Garmin Connect Personal API client (ApiKey->24h JWT, chunked activity/.fit pull, daily HRV/sleep/RHR/Body Battery sync, encrypted key storage)",
+      "status": "pending",
+      "depends_on": [
+        "M8-03",
+        "M9-01"
+      ],
+      "files_expected": [
+        "apps/worker/src/lib/crypto.ts",
+        "apps/worker/src/lib/garmin-client.ts",
+        "apps/worker/src/lib/garmin-sync.ts",
+        "apps/worker/test/garmin-sync.test.ts"
+      ],
+      "acceptance_criteria": [
+        "Encrypts user Garmin Personal API keys at rest in provider_connections using AES-GCM derived from SESSION_SIGNING_SECRET",
+        "Exchanges ApiKey for cached 24h Bearer JWT at personal.connectapi.garmin.com and chunks pulls to <=7-day windows with graceful HTTP 429 backoff",
+        "Downloads raw .fit files to R2, parses activities + activity_laps + peaks idempotently, updates daily_pmc, and upserts daily_biometrics (HRV, sleep, RHR, Body Battery, stress, weight)",
+        "Mocked Workers tests verify token caching, idempotent re-sync, 429 handling, and per-user data isolation"
+      ],
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+    },
+    {
+      "id": "M9-03",
+      "milestone": "M9",
+      "title": "Wire Cloudflare Worker hourly Cron Trigger and Settings/Dashboard UI for Garmin Personal API connection and daily readiness (HRV/sleep/RHR)",
+      "status": "pending",
+      "depends_on": [
+        "M9-02"
+      ],
+      "files_expected": [
+        "apps/worker/wrangler.jsonc",
+        "apps/worker/src/index.ts",
+        "apps/worker/src/routes/garmin.ts",
+        "apps/web/src/pages/SettingsPage.tsx",
+        "apps/web/src/pages/AnalyticsPage.tsx"
+      ],
+      "acceptance_criteria": [
+        "Worker exports scheduled() Cron handler syncing connected Garmin Personal API users without throwing on single-user errors",
+        "REST endpoints /api/garmin/connect, /api/garmin/status, /api/garmin/sync, and /api/garmin/disconnect manage per-user key safely without ever returning raw keys",
+        "Settings UI lets each user save their Garmin Personal API key, trigger Sync Now, and inspect last sync status",
+        "Analytics UI displays recent HRV/sleep/resting HR readiness trends when daily_biometrics rows exist"
+      ],
+      "verify_cmd": "./scripts/verify.sh --strict && npm --workspace @paincave/web run build"
+    },
+    {
+      "id": "M10-01",
+      "milestone": "M10",
+      "title": "Add batch archive import API endpoint, multi-year daily_pmc rebuild, and get_training_history_summary MCP tool",
+      "status": "pending",
+      "depends_on": [
+        "M8-03",
+        "M9-01"
+      ],
+      "files_expected": [
+        "apps/worker/src/routes/import.ts",
+        "apps/worker/src/mcp/read-tools.ts",
+        "apps/worker/test/bulk-import.test.ts"
+      ],
+      "acceptance_criteria": [
+        "POST /api/import/batch accepts authenticated importer-token batches of parsed activities + laps + optional raw .fit + biometrics idempotently",
+        "POST /api/import/rebuild-pmc deterministically recomputes multi-year daily_pmc for the authenticated userId",
+        "get_training_history_summary MCP tool returns compact yearly/monthly volume rollups and seasonal bests suitable for 3,000+ workouts",
+        "Tests verify duplicate skipping, multi-year PMC rebuild, and MCP summary accuracy"
+      ],
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+    },
+    {
+      "id": "M10-02",
+      "milestone": "M10",
+      "title": "Build local CLI bulk archive importer (scripts/import-archive.ts) for Strava Export ZIP (3,000+ workouts) and Garmin Export ZIP",
+      "status": "pending",
+      "depends_on": [
+        "M10-01"
+      ],
+      "files_expected": [
+        "scripts/import-archive.ts",
+        "packages/shared/src/import/archive.ts",
+        "packages/shared/src/import/__tests__/archive.test.ts"
+      ],
+      "acceptance_criteria": [
+        "Parses Strava Account Export (activities.csv + .fit.gz/.gpx.gz/.tcx.gz) and Garmin Account Export (.fit + wellness JSONs) locally with zero Strava API calls",
+        "Uploads in idempotent, resumable batches with progress logging and dry-run mode (--dry-run)",
+        "Unit tests validate fixture Strava and Garmin archive parsing, gzip decompression, and deduplication keys"
+      ],
+      "verify_cmd": "./scripts/verify.sh --strict"
+    },
+    {
+      "id": "M11-01",
+      "milestone": "M11",
+      "title": "Add Running and Strength WorkoutSpec schemas, sport-specific guardrails, and PWA calendar/workout cards",
+      "status": "pending",
+      "depends_on": [
+        "M8-03",
+        "M9-01"
+      ],
+      "files_expected": [
+        "packages/shared/src/workout/run-schema.ts",
+        "packages/shared/src/workout/strength-schema.ts",
+        "packages/shared/src/workout/guardrails.ts",
+        "packages/shared/src/workout/__tests__/multisport-workout.test.ts",
+        "apps/worker/src/lib/workouts-service.ts",
+        "apps/web/src/pages/WorkoutsPage.tsx",
+        "apps/web/src/pages/CalendarPage.tsx"
+      ],
+      "acceptance_criteria": [
+        "Supports running steps (duration_s or distance_m + pace_zone/pace_range/hr_zone) and strength blocks (movement_pattern, sets, reps, target_rpe_or_rir, rest_s)",
+        "Guardrails check running weekly volume jump (>15% warning), back-to-back quality run spacing, and lower-body strength interference before key endurance days",
+        "Existing cycling WorkoutSpec schema_version 1 and trainer-bridge compatibility remain 100% intact",
+        "PWA Workouts and Calendar pages render cycling, running, and strength sessions cleanly with sport badges"
+      ],
+      "verify_cmd": "./scripts/verify.sh --strict"
+    },
+    {
+      "id": "M11-02",
+      "milestone": "M11",
+      "title": "Upgrade Remote MCP with get_health_and_training_brief, get_biometrics_history, list_activities, get_activity_detail (laps), and LLM memory tools",
+      "status": "pending",
+      "depends_on": [
+        "M9-03",
+        "M10-01",
+        "M11-01"
+      ],
+      "files_expected": [
+        "apps/worker/src/mcp/read-tools.ts",
+        "apps/worker/src/mcp/write-tools.ts",
+        "apps/worker/test/mcp-health-brief.test.ts"
+      ],
+      "acceptance_criteria": [
+        "get_health_and_training_brief returns profile, thresholds, goals, active memory notes, 7d HRV/RHR/sleep vs 30d/60d baseline deltas, multi-sport load, recent 14d activities, and next 7d calendar in one compact JSON payload",
+        "list_activities and get_activity_detail expose multi-sport metrics and activity_laps splits",
+        "save_memory_note / update_memory_note / archive_memory_note let LLMs record subjective context, niggles, and preferences without manual UI forms",
+        "create_workout and schedule_workout support cycling, running, and strength specs per userId"
+      ],
+      "verify_cmd": "npm --workspace @paincave/worker run typecheck && npm --workspace @paincave/worker run test"
+    },
+    {
+      "id": "M11-03",
+      "milestone": "M11",
+      "title": "Implement pure-TypeScript Garmin .FIT Workout binary encoder and 1-click download (plus optional Intervals.icu outbound watch push)",
+      "status": "pending",
+      "depends_on": [
+        "M11-01"
+      ],
+      "files_expected": [
+        "packages/shared/src/fit/workout-encoder.ts",
+        "packages/shared/src/fit/__tests__/workout-encoder.test.ts",
+        "apps/worker/src/routes/workouts.ts",
+        "apps/web/src/pages/WorkoutsPage.tsx"
+      ],
+      "acceptance_criteria": [
+        "Encodes running, cycling, and strength WorkoutSpecs into valid Garmin .fit Workout binary files (file_type=5, workout msg 26, workout_step msg 27, CRC-16 checksum)",
+        "GET /api/workouts/:id/export?format=fit downloads a Garmin-compatible .fit workout file",
+        "Optional per-user Intervals.icu outbound push sends scheduled running/cycling workouts wirelessly to Garmin watch calendar when configured",
+        "Unit tests verify binary FIT header, CRC-16 integrity, step duration/distance/target encoding, and repeat block expansion"
+      ],
+      "verify_cmd": "./scripts/verify.sh --strict"
+    },
+    {
+      "id": "M11-04",
+      "milestone": "M11",
+      "title": "Extend vertical simulation E2E loop (scripts/sim-e2e.sh) for two isolated users (cycling bridge + Garmin runner) and pass full strict verification",
+      "status": "pending",
+      "depends_on": [
+        "M10-02",
+        "M11-02",
+        "M11-03"
+      ],
+      "files_expected": [
+        "scripts/sim-e2e.sh",
+        "scripts/sim-e2e-driver.mjs"
+      ],
+      "acceptance_criteria": [
+        "Simulates User A (indoor cycling bridge + Strava + MCP) and User B (Garmin Personal API run + HRV sync + LLM run/strength workout + .FIT workout export) simultaneously against local Wrangler D1/R2",
+        "Asserts zero cross-user data leakage across REST and MCP endpoints",
+        "Passes ./scripts/sim-e2e.sh, ./scripts/verify.sh --strict, npm run build, and wrangler deploy --dry-run"
+      ],
+      "verify_cmd": "./scripts/sim-e2e.sh && ./scripts/verify.sh --strict"
     }
   ]
 }
