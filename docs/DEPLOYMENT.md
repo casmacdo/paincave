@@ -108,6 +108,19 @@ Once deployed:
    - Save your baseline **FTP / LTHR / HRmax / Weight** snapshot.
    - If Strava secrets were configured, click **Connect Strava** to complete the OAuth consent flow.
 
+### GitHub Actions auto-deploy
+
+The `Deploy to Cloudflare` workflow runs for pushes to `main` and supports manual
+dispatch. Configure these repository secrets before enabling the workflow:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
+- `PAINCAVE_D1_DATABASE_ID`
+
+The workflow runs strict verification and the production build, generates an
+ignored Wrangler production config from the tracked base config, applies D1
+migrations, deploys the Worker and web assets, and verifies the live build SHA.
+
 ---
 
 ## 5. Connect Remote MCP Clients for Planning & Analysis (Mobile & Desktop)
