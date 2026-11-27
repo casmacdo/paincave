@@ -31,7 +31,6 @@ describe("AuthScreen (Google-only sign-in)", () => {
           owner_email_restricted: false,
           providers: { google: true },
         }}
-        onAuthenticated={vi.fn().mockResolvedValue(undefined)}
       />
     );
 
@@ -60,7 +59,6 @@ describe("AuthScreen (Google-only sign-in)", () => {
           owner_email_restricted: true,
           providers: { google: true },
         }}
-        onAuthenticated={vi.fn().mockResolvedValue(undefined)}
       />
     );
 
@@ -78,7 +76,6 @@ describe("AuthScreen (Google-only sign-in)", () => {
           has_owner: false,
           providers: { google: false },
         }}
-        onAuthenticated={vi.fn().mockResolvedValue(undefined)}
       />
     );
 
@@ -97,7 +94,6 @@ describe("AuthScreen (Google-only sign-in)", () => {
           owner_email_restricted: true,
           providers: { google: true },
         }}
-        onAuthenticated={vi.fn().mockResolvedValue(undefined)}
       />
     );
 

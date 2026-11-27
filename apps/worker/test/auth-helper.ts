@@ -4,6 +4,7 @@ import { makeSignature } from "better-auth/crypto";
 type TestEnv = typeof env & {
   ALLOWED_OWNER_EMAIL?: string;
   ALLOWED_USER_EMAILS?: string;
+  BETTER_AUTH_SECRET?: string;
   SESSION_SIGNING_SECRET?: string;
 };
 
@@ -58,9 +59,9 @@ export async function createTestSession(
     .bind(userId, name, JSON.stringify({ indoor_trainer: indoorTrainer }))
     .run();
 
-  const secret = testEnv.SESSION_SIGNING_SECRET;
+  const secret = testEnv.BETTER_AUTH_SECRET || testEnv.SESSION_SIGNING_SECRET;
   if (!secret) {
-    throw new Error("SESSION_SIGNING_SECRET is required for test sessions");
+    throw new Error("BETTER_AUTH_SECRET or SESSION_SIGNING_SECRET is required for test sessions");
   }
   const signedToken = await signTestCookieValue(sessionToken, secret);
   return `__Secure-better-auth.session_token=${encodeURIComponent(signedToken)}`;

@@ -148,7 +148,7 @@ function AppShell() {
   }
 
   if (!authState.authenticated) {
-    return <AuthScreen authState={authState} onAuthenticated={refreshAuthState} />;
+    return <AuthScreen authState={authState} />;
   }
 
   const ftpWatts = thresholds?.ftp_watts ?? 250;

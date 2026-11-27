@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
 
 function parseArgs(argv) {
   const opts = {
@@ -32,26 +34,44 @@ function shiftIsoDay(day, deltaDays) {
   return dt.toISOString().slice(0, 10);
 }
 
-function extractBetterAuthCookie(headers) {
-  const cookies = typeof headers.getSetCookie === "function"
-    ? headers.getSetCookie()
-    : [headers.get("Set-Cookie") ?? ""];
-  return cookies
-    .map((c) => c.split(";")[0]?.trim() ?? "")
-    .filter((pair) => pair.includes("better-auth.session_token="))
-    .join("; ");
+function escapeSqlString(value) {
+  return String(value).replaceAll("'", "''");
 }
 
-async function signUpBetterAuth(workerUrl, name, email, password) {
-  const res = await fetch(`${workerUrl}/api/auth/sign-up/email`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Origin: workerUrl,
-    },
-    body: JSON.stringify({ name, email, password }),
-  });
-  return { res, cookie: extractBetterAuthCookie(res.headers) };
+function seedBetterAuthSession(wranglerStateDir, secret, { name, email, indoorTrainer }) {
+  const userId = crypto.randomUUID();
+  const sessionId = crypto.randomUUID();
+  const sessionToken = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const sportsJson = indoorTrainer ? '["cycling","strength"]' : '["running","strength"]';
+  const featuresJson = JSON.stringify({ indoor_trainer: indoorTrainer });
+
+  const sql = [
+    `INSERT INTO user (id, name, email, emailVerified, image, createdAt, updatedAt) VALUES ('${escapeSqlString(userId)}', '${escapeSqlString(name)}', '${escapeSqlString(email.toLowerCase())}', 1, NULL, '${escapeSqlString(now)}', '${escapeSqlString(now)}');`,
+    `INSERT INTO session (id, expiresAt, token, createdAt, updatedAt, ipAddress, userAgent, userId) VALUES ('${escapeSqlString(sessionId)}', '${escapeSqlString(expiresAt)}', '${escapeSqlString(sessionToken)}', '${escapeSqlString(now)}', '${escapeSqlString(now)}', NULL, NULL, '${escapeSqlString(userId)}');`,
+    `INSERT OR IGNORE INTO athlete_profile (user_id, display_name, timezone, units, primary_sports_json, features_json) VALUES ('${escapeSqlString(userId)}', '${escapeSqlString(name)}', 'UTC', 'metric', '${escapeSqlString(sportsJson)}', '${escapeSqlString(featuresJson)}');`,
+  ].join(" ");
+
+  execFileSync(
+    "npx",
+    [
+      "wrangler",
+      "d1",
+      "execute",
+      "paincave-db",
+      "--local",
+      "--persist-to",
+      wranglerStateDir,
+      "--command",
+      sql,
+    ],
+    { cwd: "apps/worker", stdio: "pipe" }
+  );
+
+  const signature = crypto.createHmac("sha256", secret).update(sessionToken).digest("base64");
+  const signedToken = `${sessionToken}.${signature}`;
+  return `better-auth.session_token=${encodeURIComponent(signedToken)}`;
 }
 
 async function callMcpTool(workerUrl, mcpToken, toolName, args, expectError = false) {
@@ -184,6 +204,8 @@ async function runBridgeWorkoutSession(wsUrl, loadPayload) {
 
 async function main() {
   const { workerUrl, bridgeUrl } = parseArgs(process.argv.slice(2));
+  const betterAuthSecret = requireEnv("E2E_BETTER_AUTH_SECRET");
+  const wranglerStateDir = requireEnv("E2E_WRANGLER_STATE");
   const bridgeToken = requireEnv("E2E_BRIDGE_TOKEN");
   const mcpTokenA = requireEnv("E2E_MCP_TOKEN");
   const today = new Date().toISOString().slice(0, 10);
@@ -198,15 +220,38 @@ async function main() {
   assert.equal(workerHealth.status, 200);
   assert.equal(bridgeHealth.status, 200);
 
-  console.log("[e2e] 2. Signing up User A (Cyclist) via Better Auth allowlist...");
-  const userASignUp = await signUpBetterAuth(
-    workerUrl,
-    "Cyclist E2E",
-    "cyclist-e2e@example.com",
-    "cyclist-strong-password-123"
+  console.log("[e2e] 2. Verifying Google-only auth endpoints & seeding User A (Cyclist)...");
+  const [socialRes, legacyLoginRes, emailSignUpRes] = await Promise.all([
+    fetch(`${workerUrl}/api/auth/sign-in/social`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: workerUrl },
+      body: JSON.stringify({ provider: "google", callbackURL: "/", errorCallbackURL: "/" }),
+    }),
+    fetch(`${workerUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "unused" }),
+    }),
+    fetch(`${workerUrl}/api/auth/sign-up/email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: workerUrl },
+      body: JSON.stringify({ name: "Test", email: "test@example.com", password: "password-123" }),
+    }),
+  ]);
+  assert.equal(socialRes.status, 200, "Expected Google OAuth initiation endpoint to succeed");
+  const socialBody = await socialRes.json();
+  assert.ok(String(socialBody.url ?? "").includes("accounts.google.com"));
+  assert.equal(legacyLoginRes.status, 404, "Expected legacy /api/auth/login to be removed");
+  assert.ok(
+    emailSignUpRes.status === 400 || emailSignUpRes.status === 404,
+    `Expected email signup to be disabled, got ${emailSignUpRes.status}`
   );
-  assert.equal(userASignUp.res.status, 200, "Expected User A Better Auth signup to succeed");
-  const cookieA = userASignUp.cookie;
+
+  const cookieA = seedBetterAuthSession(wranglerStateDir, betterAuthSecret, {
+    name: "Cyclist E2E",
+    email: "cyclist-e2e@example.com",
+    indoorTrainer: true,
+  });
   assert.ok(cookieA.includes("better-auth.session_token="), "Expected Better Auth session cookie");
 
   const profARes = await fetch(`${workerUrl}/api/athlete/profile`, {
@@ -398,23 +443,12 @@ async function main() {
   assert.ok(mcpFitnessA.current_pmc && mcpFitnessA.current_pmc.atl > 0);
   assert.equal(oauthMeta.status, 200);
 
-  console.log("[e2e] 10. Enforcing allowlist rejection & onboarding User B (Garmin Runner)...");
-  const intruder = await signUpBetterAuth(
-    workerUrl,
-    "Intruder",
-    "intruder-e2e@example.com",
-    "intruder-password-123"
-  );
-  assert.equal(intruder.res.status, 403, "Unlisted email must be blocked with 403");
-
-  const userBSignUp = await signUpBetterAuth(
-    workerUrl,
-    "Runner E2E",
-    "runner-e2e@example.com",
-    "runner-strong-password-456"
-  );
-  assert.equal(userBSignUp.res.status, 200, "Allowlisted User B signup must succeed");
-  const cookieB = userBSignUp.cookie;
+  console.log("[e2e] 10. Onboarding User B (Garmin Runner) via Google-style Better Auth session...");
+  const cookieB = seedBetterAuthSession(wranglerStateDir, betterAuthSecret, {
+    name: "Runner E2E",
+    email: "runner-e2e@example.com",
+    indoorTrainer: false,
+  });
   assert.ok(cookieB.includes("better-auth.session_token="));
 
   const profBRes = await fetch(`${workerUrl}/api/athlete/profile`, {

@@ -5,7 +5,6 @@ import { useI18n } from "../lib/i18n.js";
 
 interface AuthScreenProps {
   authState: AuthState;
-  onAuthenticated: () => Promise<void>;
 }
 
 function getSafeReturnTo(): string {

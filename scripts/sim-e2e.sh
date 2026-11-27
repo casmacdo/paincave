@@ -22,6 +22,8 @@ E2E_BRIDGE_URL="http://127.0.0.1:${E2E_BRIDGE_PORT}"
 WORKER_PID=""
 BRIDGE_PID=""
 TMP_DIR="$(mktemp -d)"
+export XDG_CONFIG_HOME="$TMP_DIR/xdg-config"
+export WRANGLER_LOG_PATH="$TMP_DIR/wrangler.log"
 
 cleanup() {
   local exit_code=$?
@@ -65,13 +67,6 @@ echo "==> [sim-e2e] Building @paincave/web assets and Rust trainer-bridge"
 npm --workspace @paincave/web run build >/dev/null
 cargo build --manifest-path crates/trainer-bridge/Cargo.toml
 
-E2E_UI_PASSWORD="sim-e2e-pw-$(openssl rand -hex 6)"
-E2E_UI_PASSWORD_HASH="$(node -e '
-const crypto = require("node:crypto");
-const saltHex = "000102030405060708090a0b0c0d0e0f";
-const derived = crypto.pbkdf2Sync(process.argv[1], Buffer.from(saltHex, "hex"), 100000, 32, "sha256").toString("hex");
-process.stdout.write(`pbkdf2_sha256$100000$${saltHex}$${derived}`);
-' "$E2E_UI_PASSWORD")"
 E2E_SESSION_SECRET="$(openssl rand -hex 24)"
 E2E_BETTER_AUTH_SECRET="$(openssl rand -hex 24)"
 E2E_BRIDGE_TOKEN="$(openssl rand -hex 24)"
@@ -87,9 +82,10 @@ echo "==> [sim-e2e] Applying local D1 migrations & starting Cloudflare Worker on
   cd apps/worker
   exec env CI=1 npx wrangler dev --local --ip 127.0.0.1 --port "$E2E_WORKER_PORT" \
     --persist-to "$TMP_DIR/wrangler-state" \
-    --var "UI_ADMIN_PASSWORD_HASH:$E2E_UI_PASSWORD_HASH" \
     --var "SESSION_SIGNING_SECRET:$E2E_SESSION_SECRET" \
     --var "BETTER_AUTH_SECRET:$E2E_BETTER_AUTH_SECRET" \
+    --var "GOOGLE_CLIENT_ID:e2e-google-client-id" \
+    --var "GOOGLE_CLIENT_SECRET:e2e-google-client-secret" \
     --var "ALLOWED_USER_EMAILS:cyclist-e2e@example.com,runner-e2e@example.com" \
     --var "BRIDGE_DEVICE_TOKEN:$E2E_BRIDGE_TOKEN" \
     --var "MCP_BEARER_TOKEN:$E2E_MCP_TOKEN" \
@@ -123,7 +119,8 @@ BRIDGE_PID=$!
 wait_for_http "${E2E_BRIDGE_URL}/health" "Rust trainer-bridge" 30
 
 echo "==> [sim-e2e] Running two-user E2E simulation driver"
-E2E_UI_PASSWORD="$E2E_UI_PASSWORD" \
+E2E_BETTER_AUTH_SECRET="$E2E_BETTER_AUTH_SECRET" \
+E2E_WRANGLER_STATE="$TMP_DIR/wrangler-state" \
 E2E_BRIDGE_TOKEN="$E2E_BRIDGE_TOKEN" \
 E2E_MCP_TOKEN="$E2E_MCP_TOKEN" \
   node scripts/sim-e2e-driver.mjs --worker-url "$E2E_WORKER_URL" --bridge-url "$E2E_BRIDGE_URL"

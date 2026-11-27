@@ -124,6 +124,16 @@ dispatch. Configure these repository secrets before enabling the workflow:
 - `CLOUDFLARE_API_TOKEN`
 - `PAINCAVE_D1_DATABASE_ID`
 
+Make sure `CLOUDFLARE_API_TOKEN` is created as a **Custom Token** scoped to the same
+account as `CLOUDFLARE_ACCOUNT_ID` with **all** of these permissions (note that
+Cloudflare's built-in "Edit Cloudflare Workers" template omits `D1: Edit` and will fail
+`wrangler d1 migrations apply` with API error `7403` unless added):
+
+- `Account → D1: Edit`
+- `Account → Workers Scripts: Edit`
+- `Account → Workers R2 Storage: Edit`
+- `Account → Account Settings: Read`
+
 The workflow runs strict verification and the production build, generates an
 ignored Wrangler production config from the tracked base config, applies D1
 migrations, deploys the Worker and web assets, and verifies the live build SHA.

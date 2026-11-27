@@ -277,6 +277,7 @@ html:not(.dark) .border-red-500\/30,
 html:not(.dark) .border-red-500\/40 {
   border-color: rgba(166, 61, 61, 0.34) !important;
 }
+html:not(.dark) .bg-amber-500\/10,
 html:not(.dark) .bg-amber-500\/15,
 html:not(.dark) .bg-amber-500\/20,
 html:not(.dark) .bg-yellow-500\/15,
@@ -288,6 +289,7 @@ html:not(.dark) .border-yellow-500,
 html:not(.dark) .border-yellow-400 {
   border-color: var(--pc-ochre) !important;
 }
+html:not(.dark) .border-amber-500\/30,
 html:not(.dark) .border-amber-500\/50,
 html:not(.dark) .border-yellow-500\/30,
 html:not(.dark) .border-yellow-500\/40 {
